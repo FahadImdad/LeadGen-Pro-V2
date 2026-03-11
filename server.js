@@ -185,16 +185,13 @@ async function searchReddit(keyword, options = {}) {
   try {
     const results = [];
     
-    // Search specifically for [Hiring] posts
-    const queries = [
-      `[Hiring] ${keyword}`,
-      `Hiring ${keyword}`,
-      `Looking for ${keyword}`,
-      `Need ${keyword}`
-    ];
+    // Search multiple subreddits for [Hiring] posts
+    const subreddits = ['forhire', 'hiring', 'freelance_forhire'];
+    const queries = [`[Hiring]`, `Hiring ${keyword}`];
 
-    for (const query of queries) {
-      const url = `https://www.reddit.com/r/forhire/search.json?q=${encodeURIComponent(query)}&restrict_sr=1&sort=new&limit=25&t=month`;
+    for (const sub of subreddits) {
+      for (const query of queries) {
+        const url = `https://www.reddit.com/r/${sub}/search.json?q=${encodeURIComponent(query)}&restrict_sr=1&sort=new&limit=25&t=month`;
       
       const response = await fetch(url, {
         headers: { 'User-Agent': 'LeadGen/1.0' }
@@ -211,9 +208,12 @@ async function searchReddit(keyword, options = {}) {
         const flair = p.link_flair_text || '';
         
         // Only accept [Hiring] posts - reject [For Hire]
-        const isHiring = (title.toLowerCase().includes('[hiring]') || flair.toLowerCase() === 'hiring') 
-          && !title.toLowerCase().includes('[for hire]') 
-          && !flair.toLowerCase().includes('for hire');
+        const titleLower = title.toLowerCase();
+        const flairLower = flair.toLowerCase();
+        const isHiring = (titleLower.includes('[hiring]') || titleLower.includes('hiring') || flairLower.includes('hiring')) 
+          && !titleLower.includes('[for hire]') 
+          && !titleLower.includes('for hire')
+          && !flairLower.includes('for hire');
         
         if (isHiring) {
           // Extract email from post
@@ -236,6 +236,7 @@ async function searchReddit(keyword, options = {}) {
             verified: false
           });
         }
+      }
       }
     }
 
