@@ -131,47 +131,49 @@ async function searchUpwork(keyword, options = {}) {
   }
 }
 
-// Upwork RSS fallback
+// Upwork search via Google (RSS is dead)
 async function searchUpworkRSS(keyword) {
+  console.log('⚠️ Upwork RSS deprecated, using Google search fallback');
+  
   try {
-    const rssUrl = `https://www.upwork.com/ab/feed/jobs/rss?q=${encodeURIComponent(keyword)}&sort=recency`;
-    const response = await fetch(rssUrl, {
-      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; LeadGen/1.0)' }
+    // Search Google for Upwork jobs
+    const query = `site:upwork.com/freelance-jobs ${keyword}`;
+    const url = `https://www.google.com/search?q=${encodeURIComponent(query)}&num=20`;
+    
+    const response = await fetch(url, {
+      headers: { 
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+      }
     });
     
     if (!response.ok) return [];
     
-    const text = await response.text();
+    const html = await response.text();
     const jobs = [];
     
-    // Simple RSS parsing
-    const items = text.match(/<item>([\s\S]*?)<\/item>/gi) || [];
-    for (const item of items.slice(0, 50)) {
-      const title = item.match(/<title><!\[CDATA\[(.*?)\]\]><\/title>/)?.[1] || '';
-      const link = item.match(/<link>(.*?)<\/link>/)?.[1] || '';
-      const desc = item.match(/<description><!\[CDATA\[(.*?)\]\]><\/description>/)?.[1] || '';
-      
-      if (title) {
-        jobs.push({
-          name: 'Upwork Client',
-          email: '',
-          phone: '-',
-          company: '-',
-          title: title,
-          source: 'Upwork',
-          intent: desc.replace(/<[^>]+>/g, '').substring(0, 200),
-          intentScore: 9,
-          url: link,
-          verified: false
-        });
-      }
+    // Extract Upwork job links from Google results
+    const linkMatches = html.match(/https:\/\/www\.upwork\.com\/freelance-jobs\/[^"&]+/g) || [];
+    
+    for (const link of [...new Set(linkMatches)].slice(0, 20)) {
+      jobs.push({
+        name: 'Upwork Client',
+        email: '',
+        phone: '-',
+        company: '-',
+        title: decodeURIComponent(link.split('/').pop().replace(/-/g, ' ')).substring(0, 80),
+        source: 'Upwork',
+        intent: `Job posting for ${keyword}`,
+        intentScore: 9,
+        url: link,
+        verified: false
+      });
     }
     
-    console.log(`✅ Upwork RSS: Found ${jobs.length} jobs`);
+    console.log(`✅ Upwork (Google): Found ${jobs.length} jobs`);
     return jobs;
 
   } catch (err) {
-    console.log('❌ Upwork RSS error:', err.message);
+    console.log('❌ Upwork search error:', err.message);
     return [];
   }
 }
@@ -181,11 +183,18 @@ async function searchUpworkRSS(keyword) {
 // ============================================================
 async function searchReddit(keyword, options = {}) {
   try {
-    const subreddits = ['forhire', 'freelance', 'slavelabour', 'Jobs4Bitcoins', 'hiring'];
     const results = [];
+    
+    // Search specifically for [Hiring] posts
+    const queries = [
+      `[Hiring] ${keyword}`,
+      `Hiring ${keyword}`,
+      `Looking for ${keyword}`,
+      `Need ${keyword}`
+    ];
 
-    for (const sub of subreddits) {
-      const url = `https://www.reddit.com/r/${sub}/search.json?q=${encodeURIComponent(keyword)}&restrict_sr=1&sort=new&limit=25`;
+    for (const query of queries) {
+      const url = `https://www.reddit.com/r/forhire/search.json?q=${encodeURIComponent(query)}&restrict_sr=1&sort=new&limit=25&t=month`;
       
       const response = await fetch(url, {
         headers: { 'User-Agent': 'LeadGen/1.0' }
@@ -199,11 +208,20 @@ async function searchReddit(keyword, options = {}) {
       for (const post of posts) {
         const p = post.data;
         const title = p.title || '';
+        const flair = p.link_flair_text || '';
         
-        // Only [Hiring] posts
-        if (title.toLowerCase().includes('[hiring]') || title.toLowerCase().includes('hiring')) {
+        // Only accept [Hiring] posts - reject [For Hire]
+        const isHiring = (title.toLowerCase().includes('[hiring]') || flair.toLowerCase() === 'hiring') 
+          && !title.toLowerCase().includes('[for hire]') 
+          && !flair.toLowerCase().includes('for hire');
+        
+        if (isHiring) {
           // Extract email from post
           const emailMatch = p.selftext?.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
+          
+          // Avoid duplicates
+          const postUrl = `https://reddit.com${p.permalink}`;
+          if (results.find(r => r.url === postUrl)) continue;
           
           results.push({
             name: p.author || 'Reddit User',
@@ -214,7 +232,7 @@ async function searchReddit(keyword, options = {}) {
             source: 'Reddit',
             intent: p.selftext?.substring(0, 200) || title,
             intentScore: 10,
-            url: `https://reddit.com${p.permalink}`,
+            url: postUrl,
             verified: false
           });
         }
