@@ -41,9 +41,14 @@ async function searchViaApify(keyword, source = 'all') {
   try {
     console.log(`🔍 Searching via Apify for "${keyword}"...`);
     
-    // Single optimized query for speed (Vercel 60s timeout)
+    // Specific queries for actual job posts
     const queries = [];
-    queries.push(`"[Hiring]" ${keyword} site:reddit.com OR site:upwork.com OR site:craigslist.org`);
+    // Reddit r/forhire [Hiring] posts only
+    queries.push(`site:reddit.com/r/forhire "[Hiring]" ${keyword}`);
+    // Upwork actual job posts (not category pages)
+    queries.push(`site:upwork.com/freelance-jobs "${keyword}" -/location -/skill`);
+    // Craigslist gigs
+    queries.push(`site:craigslist.org/gig "${keyword}"`);
 
     // Use Apify's Google Search Results Scraper
     const response = await fetch(
@@ -88,8 +93,23 @@ async function searchViaApify(keyword, source = 'all') {
         // Extract email if present
         const emailMatch = snippet.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
         
-        // Skip [For Hire] posts
-        if (title.toLowerCase().includes('[for hire]') || title.toLowerCase().includes('for hire')) continue;
+        // Skip [For Hire] posts and category pages
+        const titleLower = title.toLowerCase();
+        const urlLower = url.toLowerCase();
+        
+        // Skip non-job posts
+        if (titleLower.includes('[for hire]') || titleLower.includes('for hire')) continue;
+        if (titleLower.includes('how to') || titleLower.includes('where to')) continue;
+        if (titleLower.includes('best place') || titleLower.includes('recommend')) continue;
+        
+        // Skip Upwork category/location pages
+        if (urlLower.includes('upwork.com/freelance-jobs/') && !urlLower.includes('/job/')) {
+          // Only keep if it's NOT a category page (has specific job ID or query)
+          if (urlLower.match(/\/freelance-jobs\/[a-z-]+\/?$/)) continue;
+        }
+        
+        // Skip Reddit discussion posts (not r/forhire)
+        if (url.includes('reddit.com') && !url.includes('/r/forhire/') && !url.includes('/r/hiring/')) continue;
         
         leads.push({
           name: leadSource === 'Reddit' ? title.match(/\[Hiring\]\s*(.*?)(?:\s*[\[\(]|$)/i)?.[1] || 'Reddit Poster' : 'Lead',
