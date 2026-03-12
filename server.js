@@ -41,18 +41,9 @@ async function searchViaApify(keyword, source = 'all') {
   try {
     console.log(`🔍 Searching via Apify for "${keyword}"...`);
     
-    // Build search queries based on source
+    // Single optimized query for speed (Vercel 60s timeout)
     const queries = [];
-    if (source === 'all' || source === 'reddit') {
-      queries.push(`site:reddit.com/r/forhire "[Hiring]" ${keyword}`);
-      queries.push(`site:reddit.com/r/hiring ${keyword}`);
-    }
-    if (source === 'all' || source === 'craigslist') {
-      queries.push(`site:craigslist.org ${keyword} gig job`);
-    }
-    if (source === 'all' || source === 'upwork') {
-      queries.push(`site:upwork.com/freelance-jobs ${keyword}`);
-    }
+    queries.push(`"[Hiring]" ${keyword} site:reddit.com OR site:upwork.com OR site:craigslist.org`);
 
     // Use Apify's Google Search Results Scraper
     const response = await fetch(
@@ -63,9 +54,11 @@ async function searchViaApify(keyword, source = 'all') {
         body: JSON.stringify({
           queries: queries.join('\n'),
           maxPagesPerQuery: 1,
-          resultsPerPage: 20,
+          resultsPerPage: 50,
           countryCode: 'us',
-          languageCode: 'en'
+          languageCode: 'en',
+          mobileResults: false,
+          includeUnfilteredResults: false
         })
       }
     );
