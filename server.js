@@ -179,68 +179,64 @@ async function searchUpworkRSS(keyword) {
 }
 
 // ============================================================
-// REDDIT - r/forhire and other subreddits
+// REDDIT - via Apify scraper (direct API is blocked)
 // ============================================================
 async function searchReddit(keyword, options = {}) {
+  if (!APIFY_API_KEY) {
+    console.log('⚠️ Apify API not configured - skipping Reddit');
+    return [];
+  }
+
   try {
-    const results = [];
+    console.log('🔍 Searching Reddit via Apify...');
     
-    // Search multiple subreddits for [Hiring] posts
-    const subreddits = ['forhire', 'hiring', 'freelance_forhire'];
-    const queries = [`[Hiring]`, `Hiring ${keyword}`];
+    // Use Apify Reddit scraper
+    const response = await fetch('https://api.apify.com/v2/acts/trudax~reddit-scraper-lite/run-sync-get-dataset-items?token=' + APIFY_API_KEY, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        startUrls: [
+          { url: `https://www.reddit.com/r/forhire/search/?q=[Hiring]&sort=new&t=month` },
+          { url: `https://www.reddit.com/r/hiring/search/?q=${keyword}&sort=new&t=month` }
+        ],
+        maxItems: options.limit || 50,
+        proxy: { useApifyProxy: true }
+      })
+    });
 
-    for (const sub of subreddits) {
-      for (const query of queries) {
-        try {
-          const url = `https://www.reddit.com/r/${sub}/search.json?q=${encodeURIComponent(query)}&restrict_sr=1&sort=new&limit=25&t=month`;
-          
-          const response = await fetch(url, {
-            headers: { 'User-Agent': 'LeadGen/1.0' }
-          });
+    if (!response.ok) {
+      console.log('❌ Apify Reddit error:', response.status);
+      // Fallback to Google search for Reddit
+      return await searchRedditViaGoogle(keyword);
+    }
 
-          if (!response.ok) continue;
+    const posts = await response.json();
+    const results = [];
 
-          const data = await response.json();
-          const posts = data.data?.children || [];
-
-          for (const post of posts) {
-            const p = post.data;
-            const title = p.title || '';
-            const flair = p.link_flair_text || '';
-            
-            // Only accept [Hiring] posts - reject [For Hire]
-            const titleLower = title.toLowerCase();
-            const flairLower = flair.toLowerCase();
-            const isHiring = (titleLower.includes('[hiring]') || flairLower.includes('hiring')) 
-              && !titleLower.includes('[for hire]') 
-              && !titleLower.includes('for hire')
-              && !flairLower.includes('for hire');
-            
-            if (isHiring) {
-              // Extract email from post
-              const emailMatch = p.selftext?.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
-              
-              // Avoid duplicates
-              const postUrl = `https://reddit.com${p.permalink}`;
-              if (results.find(r => r.url === postUrl)) continue;
-              
-              results.push({
-                name: p.author || 'Reddit User',
-                email: emailMatch?.[0] || '',
-                phone: '-',
-                company: '-',
-                title: title.substring(0, 100),
-                source: 'Reddit',
-                intent: p.selftext?.substring(0, 200) || title,
-                intentScore: 10,
-                url: postUrl,
-                verified: false
-              });
-            }
-          }
-        } catch (e) {
-          console.log(`Reddit ${sub} error:`, e.message);
-        }
+    for (const p of posts) {
+      const title = p.title || '';
+      const titleLower = title.toLowerCase();
+      
+      // Only [Hiring] posts
+      const isHiring = (titleLower.includes('[hiring]') || titleLower.includes('hiring'))
+        && !titleLower.includes('[for hire]')
+        && !titleLower.includes('for hire');
+      
+      if (isHiring) {
+        const emailMatch = (p.body || p.selftext || '').match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
+        
+        results.push({
+          name: p.author || 'Reddit User',
+          email: emailMatch?.[0] || '',
+          phone: '-',
+          company: '-',
+          title: title.substring(0, 100),
+          source: 'Reddit',
+          intent: (p.body || p.selftext || title).substring(0, 200),
+          intentScore: 10,
+          url: p.url || `https://reddit.com${p.permalink}`,
+          verified: false
+        });
       }
     }
 
@@ -249,6 +245,50 @@ async function searchReddit(keyword, options = {}) {
 
   } catch (err) {
     console.log('❌ Reddit error:', err.message);
+    return await searchRedditViaGoogle(keyword);
+  }
+}
+
+// Fallback: Search Reddit via Google
+async function searchRedditViaGoogle(keyword) {
+  try {
+    const query = `site:reddit.com/r/forhire "[Hiring]" ${keyword}`;
+    const url = `https://www.google.com/search?q=${encodeURIComponent(query)}&num=20`;
+    
+    const response = await fetch(url, {
+      headers: { 
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+      }
+    });
+    
+    if (!response.ok) return [];
+    
+    const html = await response.text();
+    const results = [];
+    
+    // Extract Reddit links from Google
+    const linkMatches = html.match(/https:\/\/www\.reddit\.com\/r\/\w+\/comments\/[^"&\s]+/g) || [];
+    
+    for (const link of [...new Set(linkMatches)].slice(0, 15)) {
+      results.push({
+        name: 'Reddit User',
+        email: '',
+        phone: '-',
+        company: '-',
+        title: `[Hiring] ${keyword} (via Google)`,
+        source: 'Reddit',
+        intent: `Hiring post for ${keyword}`,
+        intentScore: 8,
+        url: link,
+        verified: false
+      });
+    }
+    
+    console.log(`✅ Reddit (Google): Found ${results.length} posts`);
+    return results;
+
+  } catch (err) {
+    console.log('❌ Reddit Google fallback error:', err.message);
     return [];
   }
 }
