@@ -191,52 +191,56 @@ async function searchReddit(keyword, options = {}) {
 
     for (const sub of subreddits) {
       for (const query of queries) {
-        const url = `https://www.reddit.com/r/${sub}/search.json?q=${encodeURIComponent(query)}&restrict_sr=1&sort=new&limit=25&t=month`;
-      
-      const response = await fetch(url, {
-        headers: { 'User-Agent': 'LeadGen/1.0' }
-      });
-
-      if (!response.ok) continue;
-
-      const data = await response.json();
-      const posts = data.data?.children || [];
-
-      for (const post of posts) {
-        const p = post.data;
-        const title = p.title || '';
-        const flair = p.link_flair_text || '';
-        
-        // Only accept [Hiring] posts - reject [For Hire]
-        const titleLower = title.toLowerCase();
-        const flairLower = flair.toLowerCase();
-        const isHiring = (titleLower.includes('[hiring]') || titleLower.includes('hiring') || flairLower.includes('hiring')) 
-          && !titleLower.includes('[for hire]') 
-          && !titleLower.includes('for hire')
-          && !flairLower.includes('for hire');
-        
-        if (isHiring) {
-          // Extract email from post
-          const emailMatch = p.selftext?.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
+        try {
+          const url = `https://www.reddit.com/r/${sub}/search.json?q=${encodeURIComponent(query)}&restrict_sr=1&sort=new&limit=25&t=month`;
           
-          // Avoid duplicates
-          const postUrl = `https://reddit.com${p.permalink}`;
-          if (results.find(r => r.url === postUrl)) continue;
-          
-          results.push({
-            name: p.author || 'Reddit User',
-            email: emailMatch?.[0] || '',
-            phone: '-',
-            company: '-',
-            title: title.substring(0, 100),
-            source: 'Reddit',
-            intent: p.selftext?.substring(0, 200) || title,
-            intentScore: 10,
-            url: postUrl,
-            verified: false
+          const response = await fetch(url, {
+            headers: { 'User-Agent': 'LeadGen/1.0' }
           });
+
+          if (!response.ok) continue;
+
+          const data = await response.json();
+          const posts = data.data?.children || [];
+
+          for (const post of posts) {
+            const p = post.data;
+            const title = p.title || '';
+            const flair = p.link_flair_text || '';
+            
+            // Only accept [Hiring] posts - reject [For Hire]
+            const titleLower = title.toLowerCase();
+            const flairLower = flair.toLowerCase();
+            const isHiring = (titleLower.includes('[hiring]') || flairLower.includes('hiring')) 
+              && !titleLower.includes('[for hire]') 
+              && !titleLower.includes('for hire')
+              && !flairLower.includes('for hire');
+            
+            if (isHiring) {
+              // Extract email from post
+              const emailMatch = p.selftext?.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
+              
+              // Avoid duplicates
+              const postUrl = `https://reddit.com${p.permalink}`;
+              if (results.find(r => r.url === postUrl)) continue;
+              
+              results.push({
+                name: p.author || 'Reddit User',
+                email: emailMatch?.[0] || '',
+                phone: '-',
+                company: '-',
+                title: title.substring(0, 100),
+                source: 'Reddit',
+                intent: p.selftext?.substring(0, 200) || title,
+                intentScore: 10,
+                url: postUrl,
+                verified: false
+              });
+            }
+          }
+        } catch (e) {
+          console.log(`Reddit ${sub} error:`, e.message);
         }
-      }
       }
     }
 
