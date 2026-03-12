@@ -1,7 +1,6 @@
 /**
  * LeadGen Pro v2 - Intent-Based Lead Generation
- * Sources: Apollo.io + Upwork + Reddit + Craigslist
- * Features: Email verification via Hunter.io
+ * Uses Apify for all scraping (bypasses blocks)
  */
 
 require('dotenv').config();
@@ -21,57 +20,136 @@ const APOLLO_API_KEY = process.env.APOLLO_API_KEY;
 const APIFY_API_KEY = process.env.APIFY_API_KEY;
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 
-console.log('🔑 API Keys loaded:', {
-  hunter: HUNTER_API_KEY ? '✅' : '❌',
-  apollo: APOLLO_API_KEY ? '✅' : '❌',
-  apify: APIFY_API_KEY ? '✅' : '❌',
-  gemini: GEMINI_API_KEY ? '✅' : '❌'
+console.log('🔑 API Keys:', {
+  hunter: !!HUNTER_API_KEY,
+  apollo: !!APOLLO_API_KEY,
+  apify: !!APIFY_API_KEY,
+  gemini: !!GEMINI_API_KEY
 });
 
-// Store leads
 let allLeads = [];
 
 // ============================================================
-// APOLLO.IO - B2B Contact Database
+// APIFY GOOGLE SEARCH - Main scraping method
 // ============================================================
-async function searchApollo(keyword, options = {}) {
-  if (!APOLLO_API_KEY) {
-    console.log('⚠️ Apollo API not configured - skipping');
+async function searchViaApify(keyword, source = 'all') {
+  if (!APIFY_API_KEY) {
+    console.log('⚠️ Apify not configured');
     return [];
   }
+
+  try {
+    console.log(`🔍 Searching via Apify for "${keyword}"...`);
+    
+    // Build search queries based on source
+    const queries = [];
+    if (source === 'all' || source === 'reddit') {
+      queries.push(`site:reddit.com/r/forhire "[Hiring]" ${keyword}`);
+      queries.push(`site:reddit.com/r/hiring ${keyword}`);
+    }
+    if (source === 'all' || source === 'craigslist') {
+      queries.push(`site:craigslist.org ${keyword} gig job`);
+    }
+    if (source === 'all' || source === 'upwork') {
+      queries.push(`site:upwork.com/freelance-jobs ${keyword}`);
+    }
+
+    // Use Apify's Google Search Results Scraper
+    const response = await fetch(
+      `https://api.apify.com/v2/acts/apify~google-search-scraper/run-sync-get-dataset-items?token=${APIFY_API_KEY}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          queries: queries.join('\n'),
+          maxPagesPerQuery: 1,
+          resultsPerPage: 20,
+          countryCode: 'us',
+          languageCode: 'en'
+        })
+      }
+    );
+
+    if (!response.ok) {
+      console.log('❌ Apify Google error:', response.status);
+      return [];
+    }
+
+    const results = await response.json();
+    const leads = [];
+
+    for (const item of results) {
+      if (!item.organicResults) continue;
+      
+      for (const result of item.organicResults) {
+        const url = result.url || '';
+        const title = result.title || '';
+        const snippet = result.description || '';
+        
+        // Determine source
+        let leadSource = 'Web';
+        if (url.includes('reddit.com')) leadSource = 'Reddit';
+        else if (url.includes('craigslist.org')) leadSource = 'Craigslist';
+        else if (url.includes('upwork.com')) leadSource = 'Upwork';
+        
+        // Extract email if present
+        const emailMatch = snippet.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
+        
+        // Skip [For Hire] posts
+        if (title.toLowerCase().includes('[for hire]') || title.toLowerCase().includes('for hire')) continue;
+        
+        leads.push({
+          name: leadSource === 'Reddit' ? title.match(/\[Hiring\]\s*(.*?)(?:\s*[\[\(]|$)/i)?.[1] || 'Reddit Poster' : 'Lead',
+          email: emailMatch?.[0] || '',
+          phone: '-',
+          company: '-',
+          title: title.substring(0, 100),
+          source: leadSource,
+          intent: snippet.substring(0, 200),
+          intentScore: leadSource === 'Reddit' && title.toLowerCase().includes('[hiring]') ? 10 : 8,
+          url: url,
+          verified: false
+        });
+      }
+    }
+
+    console.log(`✅ Apify: Found ${leads.length} leads`);
+    return leads;
+
+  } catch (err) {
+    console.log('❌ Apify error:', err.message);
+    return [];
+  }
+}
+
+// ============================================================
+// APOLLO.IO - B2B Contacts (requires paid plan)
+// ============================================================
+async function searchApollo(keyword, options = {}) {
+  if (!APOLLO_API_KEY) return [];
 
   try {
     const response = await fetch('https://api.apollo.io/v1/mixed_people/search', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Cache-Control': 'no-cache',
         'X-Api-Key': APOLLO_API_KEY
       },
       body: JSON.stringify({
         q_keywords: keyword,
-        page: options.page || 1,
-        per_page: options.limit || 25,
-        person_titles: options.titles || [],
-        person_locations: options.locations || []
+        per_page: options.limit || 25
       })
     });
 
-    if (!response.ok) {
-      console.log('❌ Apollo error:', response.status);
-      return [];
-    }
+    if (!response.ok) return [];
 
     const data = await response.json();
-    const people = data.people || [];
-
-    return people.map(p => ({
+    return (data.people || []).map(p => ({
       name: p.name || `${p.first_name} ${p.last_name}`,
       email: p.email,
       phone: p.phone_numbers?.[0]?.number || '-',
       company: p.organization?.name || '-',
       title: p.title || '-',
-      linkedin: p.linkedin_url || '',
       source: 'Apollo',
       intent: `${p.title} at ${p.organization?.name || 'Unknown'}`,
       intentScore: 7,
@@ -85,275 +163,11 @@ async function searchApollo(keyword, options = {}) {
 }
 
 // ============================================================
-// UPWORK - Job Posts (via Apify or Direct)
-// ============================================================
-async function searchUpwork(keyword, options = {}) {
-  try {
-    // Use Apify's Upwork scraper
-    if (APIFY_API_KEY) {
-      console.log('🔍 Searching Upwork via Apify...');
-      
-      const response = await fetch('https://api.apify.com/v2/acts/epctex~upwork-scraper/run-sync-get-dataset-items?token=' + APIFY_API_KEY, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          searchTerms: [keyword],
-          maxItems: options.limit || 50
-        })
-      });
-
-      if (!response.ok) {
-        console.log('❌ Apify Upwork error:', response.status);
-        return await searchUpworkRSS(keyword);
-      }
-
-      const jobs = await response.json();
-      return jobs.map(job => ({
-        name: job.client?.name || job.clientName || 'Upwork Client',
-        email: '', // Will enrich with Hunter
-        phone: '-',
-        company: job.client?.company || '-',
-        title: job.title || 'Job Post',
-        source: 'Upwork',
-        intent: job.description?.substring(0, 200) || job.title,
-        intentScore: 9,
-        budget: job.budget || job.hourlyRange || '-',
-        url: job.url || job.link,
-        verified: false
-      }));
-    }
-
-    return await searchUpworkRSS(keyword);
-
-  } catch (err) {
-    console.log('❌ Upwork error:', err.message);
-    return await searchUpworkRSS(keyword);
-  }
-}
-
-// Upwork search via Google (RSS is dead)
-async function searchUpworkRSS(keyword) {
-  console.log('⚠️ Upwork RSS deprecated, using Google search fallback');
-  
-  try {
-    // Search Google for Upwork jobs
-    const query = `site:upwork.com/freelance-jobs ${keyword}`;
-    const url = `https://www.google.com/search?q=${encodeURIComponent(query)}&num=20`;
-    
-    const response = await fetch(url, {
-      headers: { 
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-      }
-    });
-    
-    if (!response.ok) return [];
-    
-    const html = await response.text();
-    const jobs = [];
-    
-    // Extract Upwork job links from Google results
-    const linkMatches = html.match(/https:\/\/www\.upwork\.com\/freelance-jobs\/[^"&]+/g) || [];
-    
-    for (const link of [...new Set(linkMatches)].slice(0, 20)) {
-      jobs.push({
-        name: 'Upwork Client',
-        email: '',
-        phone: '-',
-        company: '-',
-        title: decodeURIComponent(link.split('/').pop().replace(/-/g, ' ')).substring(0, 80),
-        source: 'Upwork',
-        intent: `Job posting for ${keyword}`,
-        intentScore: 9,
-        url: link,
-        verified: false
-      });
-    }
-    
-    console.log(`✅ Upwork (Google): Found ${jobs.length} jobs`);
-    return jobs;
-
-  } catch (err) {
-    console.log('❌ Upwork search error:', err.message);
-    return [];
-  }
-}
-
-// ============================================================
-// REDDIT - via Apify scraper (direct API is blocked)
-// ============================================================
-async function searchReddit(keyword, options = {}) {
-  if (!APIFY_API_KEY) {
-    console.log('⚠️ Apify API not configured - skipping Reddit');
-    return [];
-  }
-
-  try {
-    console.log('🔍 Searching Reddit via Apify...');
-    
-    // Use Apify Reddit scraper
-    const response = await fetch('https://api.apify.com/v2/acts/trudax~reddit-scraper-lite/run-sync-get-dataset-items?token=' + APIFY_API_KEY, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        startUrls: [
-          { url: `https://www.reddit.com/r/forhire/search/?q=[Hiring]&sort=new&t=month` },
-          { url: `https://www.reddit.com/r/hiring/search/?q=${keyword}&sort=new&t=month` }
-        ],
-        maxItems: options.limit || 50,
-        proxy: { useApifyProxy: true }
-      })
-    });
-
-    if (!response.ok) {
-      console.log('❌ Apify Reddit error:', response.status);
-      // Fallback to Google search for Reddit
-      return await searchRedditViaGoogle(keyword);
-    }
-
-    const posts = await response.json();
-    const results = [];
-
-    for (const p of posts) {
-      const title = p.title || '';
-      const titleLower = title.toLowerCase();
-      
-      // Only [Hiring] posts
-      const isHiring = (titleLower.includes('[hiring]') || titleLower.includes('hiring'))
-        && !titleLower.includes('[for hire]')
-        && !titleLower.includes('for hire');
-      
-      if (isHiring) {
-        const emailMatch = (p.body || p.selftext || '').match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
-        
-        results.push({
-          name: p.author || 'Reddit User',
-          email: emailMatch?.[0] || '',
-          phone: '-',
-          company: '-',
-          title: title.substring(0, 100),
-          source: 'Reddit',
-          intent: (p.body || p.selftext || title).substring(0, 200),
-          intentScore: 10,
-          url: p.url || `https://reddit.com${p.permalink}`,
-          verified: false
-        });
-      }
-    }
-
-    console.log(`✅ Reddit: Found ${results.length} [Hiring] posts`);
-    return results;
-
-  } catch (err) {
-    console.log('❌ Reddit error:', err.message);
-    return await searchRedditViaGoogle(keyword);
-  }
-}
-
-// Fallback: Search Reddit via Google
-async function searchRedditViaGoogle(keyword) {
-  try {
-    const query = `site:reddit.com/r/forhire "[Hiring]" ${keyword}`;
-    const url = `https://www.google.com/search?q=${encodeURIComponent(query)}&num=20`;
-    
-    const response = await fetch(url, {
-      headers: { 
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-      }
-    });
-    
-    if (!response.ok) return [];
-    
-    const html = await response.text();
-    const results = [];
-    
-    // Extract Reddit links from Google
-    const linkMatches = html.match(/https:\/\/www\.reddit\.com\/r\/\w+\/comments\/[^"&\s]+/g) || [];
-    
-    for (const link of [...new Set(linkMatches)].slice(0, 15)) {
-      results.push({
-        name: 'Reddit User',
-        email: '',
-        phone: '-',
-        company: '-',
-        title: `[Hiring] ${keyword} (via Google)`,
-        source: 'Reddit',
-        intent: `Hiring post for ${keyword}`,
-        intentScore: 8,
-        url: link,
-        verified: false
-      });
-    }
-    
-    console.log(`✅ Reddit (Google): Found ${results.length} posts`);
-    return results;
-
-  } catch (err) {
-    console.log('❌ Reddit Google fallback error:', err.message);
-    return [];
-  }
-}
-
-// ============================================================
-// CRAIGSLIST - Gigs Section
-// ============================================================
-async function searchCraigslist(keyword, options = {}) {
-  try {
-    // Craigslist RSS for gigs
-    const cities = ['newyork', 'losangeles', 'chicago', 'houston', 'phoenix'];
-    const results = [];
-
-    for (const city of cities.slice(0, 3)) {
-      const url = `https://${city}.craigslist.org/search/ggg?format=rss&query=${encodeURIComponent(keyword)}`;
-      
-      const response = await fetch(url, {
-        headers: { 'User-Agent': 'Mozilla/5.0' }
-      });
-
-      if (!response.ok) continue;
-
-      const text = await response.text();
-      const items = text.match(/<item[\s\S]*?<\/item>/gi) || [];
-
-      for (const item of items.slice(0, 10)) {
-        const title = item.match(/<title>(.*?)<\/title>/)?.[1] || '';
-        const link = item.match(/<link>(.*?)<\/link>/)?.[1] || '';
-        const desc = item.match(/<description>(.*?)<\/description>/)?.[1] || '';
-        
-        // Try to find email in description
-        const emailMatch = desc.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
-
-        if (title) {
-          results.push({
-            name: 'Craigslist Poster',
-            email: emailMatch?.[0] || '',
-            phone: '-',
-            company: '-',
-            title: title,
-            source: 'Craigslist',
-            intent: desc.replace(/<[^>]+>/g, '').substring(0, 200),
-            intentScore: 8,
-            url: link,
-            verified: false
-          });
-        }
-      }
-    }
-
-    console.log(`✅ Craigslist: Found ${results.length} gigs`);
-    return results;
-
-  } catch (err) {
-    console.log('❌ Craigslist error:', err.message);
-    return [];
-  }
-}
-
-// ============================================================
-// HUNTER.IO - Email Verification & Enrichment
+// HUNTER.IO - Email Verification
 // ============================================================
 async function verifyEmail(email) {
   if (!HUNTER_API_KEY || !email || !email.includes('@')) {
-    return { valid: false, reason: 'Invalid email' };
+    return { valid: false };
   }
 
   try {
@@ -361,45 +175,15 @@ async function verifyEmail(email) {
       `https://api.hunter.io/v2/email-verifier?email=${encodeURIComponent(email)}&api_key=${HUNTER_API_KEY}`
     );
 
-    if (!response.ok) return { valid: false, reason: 'API error' };
+    if (!response.ok) return { valid: false };
 
     const data = await response.json();
     return {
-      valid: data.data?.status === 'valid' || data.data?.status === 'accept_all',
-      status: data.data?.status,
-      score: data.data?.score
+      valid: data.data?.status === 'valid' || data.data?.status === 'accept_all'
     };
 
   } catch (err) {
-    return { valid: false, reason: err.message };
-  }
-}
-
-async function findEmail(domain, name = '') {
-  if (!HUNTER_API_KEY || !domain) {
-    return null;
-  }
-
-  try {
-    let url = `https://api.hunter.io/v2/domain-search?domain=${encodeURIComponent(domain)}&api_key=${HUNTER_API_KEY}`;
-    if (name) {
-      url = `https://api.hunter.io/v2/email-finder?domain=${encodeURIComponent(domain)}&full_name=${encodeURIComponent(name)}&api_key=${HUNTER_API_KEY}`;
-    }
-
-    const response = await fetch(url);
-    if (!response.ok) return null;
-
-    const data = await response.json();
-    
-    if (name) {
-      return data.data?.email || null;
-    }
-    
-    // Return first email from domain search
-    return data.data?.emails?.[0]?.value || null;
-
-  } catch (err) {
-    return null;
+    return { valid: false };
   }
 }
 
@@ -413,7 +197,7 @@ app.get('/api/search', async (req, res) => {
     return res.status(400).json({ error: 'Keyword required' });
   }
 
-  // Set up SSE
+  // SSE setup
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
@@ -424,80 +208,62 @@ app.get('/api/search', async (req, res) => {
 
   try {
     let results = [];
-    const sourceList = sources === 'all' ? ['apollo', 'upwork', 'reddit', 'craigslist'] : sources.split(',');
 
     send('status', { message: `Searching for "${keyword}"...` });
 
-    // Search all sources in parallel
-    const searches = [];
-
-    if (sourceList.includes('apollo') && APOLLO_API_KEY) {
+    // Apollo (if configured and paid)
+    if (sources.includes('apollo') && APOLLO_API_KEY) {
       send('status', { message: '🔍 Searching Apollo.io...' });
-      searches.push(searchApollo(keyword, { limit: Math.min(limit, 25) }));
+      const apolloResults = await searchApollo(keyword, { limit: 25 });
+      results = results.concat(apolloResults);
     }
 
-    if (sourceList.includes('upwork')) {
-      send('status', { message: '🔍 Searching Upwork jobs...' });
-      searches.push(searchUpwork(keyword, { limit }));
-    }
-
-    if (sourceList.includes('reddit')) {
-      send('status', { message: '🔍 Searching Reddit [Hiring]...' });
-      searches.push(searchReddit(keyword, { limit }));
-    }
-
-    if (sourceList.includes('craigslist')) {
-      send('status', { message: '🔍 Searching Craigslist gigs...' });
-      searches.push(searchCraigslist(keyword, { limit }));
-    }
-
-    const searchResults = await Promise.all(searches);
-    results = searchResults.flat();
+    // Apify scraping for Reddit/Upwork/Craigslist
+    send('status', { message: '🔍 Searching job boards via Apify...' });
+    const apifyResults = await searchViaApify(keyword, sources);
+    results = results.concat(apifyResults);
 
     send('status', { message: `Found ${results.length} leads. Verifying emails...` });
 
-    // Verify/enrich emails
+    // Verify emails
     let verified = 0;
-    for (let i = 0; i < results.length; i++) {
+    for (let i = 0; i < Math.min(results.length, 10); i++) { // Limit verification to save credits
       const lead = results[i];
-
-      // If no email, try to find one
-      if (!lead.email && lead.company && lead.company !== '-') {
-        send('status', { message: `🔍 Finding email for ${lead.company}...` });
-        const foundEmail = await findEmail(lead.company, lead.name);
-        if (foundEmail) {
-          lead.email = foundEmail;
-          lead.verified = true;
-          verified++;
-        }
-      }
-
-      // Verify existing email
       if (lead.email && !lead.verified) {
-        const verification = await verifyEmail(lead.email);
-        lead.verified = verification.valid;
-        if (verification.valid) verified++;
+        const v = await verifyEmail(lead.email);
+        lead.verified = v.valid;
+        if (v.valid) verified++;
       }
-
-      // Send lead to frontend
       send('lead', { lead, index: i + 1, total: results.length });
     }
 
-    // Filter to only verified emails if requested
+    // Send remaining leads
+    for (let i = 10; i < results.length; i++) {
+      send('lead', { lead: results[i], index: i + 1, total: results.length });
+    }
+
     allLeads = results;
 
-    send('complete', {
-      total: results.length,
-      verified,
-      leads: results
-    });
-
+    send('complete', { total: results.length, verified, leads: results });
     res.end();
 
   } catch (err) {
     send('error', { message: err.message });
     res.end();
   }
+});
+
+// Health check
+app.get('/api/health', (req, res) => {
+  res.json({
+    status: 'ok',
+    apis: {
+      hunter: !!HUNTER_API_KEY,
+      apollo: !!APOLLO_API_KEY,
+      apify: !!APIFY_API_KEY,
+      gemini: !!GEMINI_API_KEY
+    }
+  });
 });
 
 // Export to Excel
@@ -517,7 +283,6 @@ app.get('/api/export', (req, res) => {
     Title: l.title,
     Source: l.source,
     Intent: l.intent,
-    'Intent Score': l.intentScore,
     Verified: l.verified ? 'Yes' : 'No',
     URL: l.url
   })));
@@ -532,21 +297,10 @@ app.get('/api/export', (req, res) => {
   res.send(buffer);
 });
 
-// Health check
-app.get('/api/health', (req, res) => {
-  res.json({
-    status: 'ok',
-    apis: {
-      hunter: !!HUNTER_API_KEY,
-      apollo: !!APOLLO_API_KEY,
-      apify: !!APIFY_API_KEY,
-      gemini: !!GEMINI_API_KEY
-    }
-  });
-});
-
 // Start server
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`🚀 LeadGen Pro v2 running on port ${PORT}`);
 });
+
+module.exports = app;
