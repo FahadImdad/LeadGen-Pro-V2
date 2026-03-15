@@ -36,7 +36,9 @@ async function scrapeWithBrightData(url) {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${BRIGHTDATA_API_KEY}`
       },
-      timeout: 60000
+      timeout: 60000,
+      // Force response as text to handle both HTML and JSON
+      transformResponse: [(data) => data]
     });
     return response.data;
   } catch (error) {
