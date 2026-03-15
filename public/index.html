@@ -3,490 +3,342 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>LeadGen Pro v2 - Intent-Based Leads</title>
+  <title>LeadGen Pro v2 - Intent Lead Generator</title>
+  <script src="https://cdn.tailwindcss.com"></script>
   <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    
-    :root {
-      --bg: #0d1117;
-      --surface: #161b22;
-      --border: #30363d;
-      --text: #e6edf3;
-      --text-muted: #8b949e;
-      --primary: #7c3aed;
-      --success: #22c55e;
-      --warning: #f59e0b;
-      --error: #ef4444;
-    }
-    
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      background: var(--bg);
-      color: var(--text);
-      min-height: 100vh;
-    }
-    
-    .container {
-      max-width: 1400px;
-      margin: 0 auto;
-      padding: 2rem;
-    }
-    
-    header {
-      text-align: center;
-      margin-bottom: 2rem;
-    }
-    
-    header h1 {
-      font-size: 2.5rem;
-      background: linear-gradient(135deg, var(--primary), #a855f7);
-      -webkit-background-clip: text;
-      -webkit-text-fill-color: transparent;
-      margin-bottom: 0.5rem;
-    }
-    
-    header p {
-      color: var(--text-muted);
-    }
-    
-    .search-box {
-      background: var(--surface);
-      border-radius: 12px;
-      padding: 1.5rem;
-      margin-bottom: 2rem;
-      border: 1px solid var(--border);
-    }
-    
-    .search-row {
-      display: flex;
-      gap: 1rem;
-      flex-wrap: wrap;
-    }
-    
-    .search-input {
-      flex: 1;
-      min-width: 250px;
-    }
-    
-    .search-input input {
-      width: 100%;
-      padding: 0.875rem 1rem;
-      border-radius: 8px;
-      border: 1px solid var(--border);
-      background: var(--bg);
-      color: var(--text);
-      font-size: 1rem;
-    }
-    
-    .search-input input:focus {
-      outline: none;
-      border-color: var(--primary);
-    }
-    
-    .sources {
-      display: flex;
-      gap: 0.5rem;
-      flex-wrap: wrap;
-      align-items: center;
-    }
-    
-    .source-btn {
-      padding: 0.5rem 1rem;
-      border-radius: 6px;
-      border: 1px solid var(--border);
-      background: var(--bg);
-      color: var(--text-muted);
-      cursor: pointer;
-      transition: all 0.2s;
-    }
-    
-    .source-btn.active {
-      background: var(--primary);
-      border-color: var(--primary);
-      color: white;
-    }
-    
-    .search-btn {
-      padding: 0.875rem 2rem;
-      border-radius: 8px;
-      border: none;
-      background: linear-gradient(135deg, var(--primary), #a855f7);
-      color: white;
-      font-size: 1rem;
-      font-weight: 600;
-      cursor: pointer;
-      transition: transform 0.2s, box-shadow 0.2s;
-    }
-    
-    .search-btn:hover {
-      transform: translateY(-2px);
-      box-shadow: 0 4px 20px rgba(124, 58, 237, 0.4);
-    }
-    
-    .search-btn:disabled {
-      opacity: 0.5;
-      cursor: not-allowed;
-      transform: none;
-    }
-    
-    .stats {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-      gap: 1rem;
-      margin-bottom: 2rem;
-    }
-    
-    .stat-card {
-      background: var(--surface);
-      border-radius: 12px;
-      padding: 1.25rem;
-      text-align: center;
-      border: 1px solid var(--border);
-    }
-    
-    .stat-card .number {
-      font-size: 2rem;
-      font-weight: 700;
-      color: var(--primary);
-    }
-    
-    .stat-card .label {
-      color: var(--text-muted);
-      font-size: 0.875rem;
-    }
-    
-    .console {
-      background: #000;
-      border-radius: 12px;
-      padding: 1rem;
-      margin-bottom: 2rem;
-      font-family: monospace;
-      font-size: 0.875rem;
-      max-height: 200px;
-      overflow-y: auto;
-    }
-    
-    .console-line {
-      padding: 0.25rem 0;
-      color: var(--text-muted);
-    }
-    
-    .console-line.success { color: var(--success); }
-    .console-line.error { color: var(--error); }
-    .console-line.info { color: #3b82f6; }
-    
-    .results {
-      background: var(--surface);
-      border-radius: 12px;
-      border: 1px solid var(--border);
-      overflow: hidden;
-    }
-    
-    .results-header {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      padding: 1rem 1.5rem;
-      border-bottom: 1px solid var(--border);
-    }
-    
-    .results-header h2 {
-      font-size: 1.25rem;
-    }
-    
-    .export-btns {
-      display: flex;
-      gap: 0.5rem;
-    }
-    
-    .export-btn {
-      padding: 0.5rem 1rem;
-      border-radius: 6px;
-      border: 1px solid var(--border);
-      background: var(--bg);
-      color: var(--text);
-      cursor: pointer;
-      font-size: 0.875rem;
-    }
-    
-    .export-btn:hover {
-      border-color: var(--primary);
-      color: var(--primary);
-    }
-    
-    .table-container {
-      overflow-x: auto;
-    }
-    
-    table {
-      width: 100%;
-      border-collapse: collapse;
-    }
-    
-    th, td {
-      padding: 1rem;
-      text-align: left;
-      border-bottom: 1px solid var(--border);
-    }
-    
-    th {
-      background: var(--bg);
-      font-weight: 600;
-      color: var(--text-muted);
-      font-size: 0.875rem;
-      text-transform: uppercase;
-    }
-    
-    tr:hover {
-      background: rgba(124, 58, 237, 0.05);
-    }
-    
-    .badge {
-      display: inline-block;
-      padding: 0.25rem 0.75rem;
-      border-radius: 999px;
-      font-size: 0.75rem;
-      font-weight: 600;
-    }
-    
-    .badge-apollo { background: #3b82f6; color: white; }
-    .badge-upwork { background: #22c55e; color: white; }
-    .badge-reddit { background: #f59e0b; color: black; }
-    .badge-craigslist { background: #a855f7; color: white; }
-    
-    .verified { color: var(--success); }
-    .unverified { color: var(--text-muted); }
-    
-    .empty-state {
-      padding: 4rem 2rem;
-      text-align: center;
-      color: var(--text-muted);
-    }
-    
-    .empty-state h3 {
-      font-size: 1.5rem;
-      margin-bottom: 0.5rem;
-      color: var(--text);
-    }
-    
-    @keyframes fadeIn {
-      from { opacity: 0; transform: translateY(10px); }
-      to { opacity: 1; transform: translateY(0); }
-    }
-    
-    .lead-row {
-      animation: fadeIn 0.3s ease;
-    }
+    .verified { color: #10b981; }
+    .unverified { color: #f59e0b; }
+    .animate-pulse-fast { animation: pulse 1s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
   </style>
 </head>
-<body>
-  <div class="container">
-    <header>
-      <h1>🎯 LeadGen Pro v2</h1>
-      <p>Intent-Based Lead Generation with Verified Emails</p>
-    </header>
-
-    <div class="search-box">
-      <div class="search-row">
-        <div class="search-input">
-          <input type="text" id="keyword" placeholder="Enter keyword (e.g., website development, book publishing)">
+<body class="bg-gray-900 text-white min-h-screen">
+  <div class="container mx-auto px-4 py-8 max-w-7xl">
+    
+    <!-- Header -->
+    <div class="text-center mb-8">
+      <h1 class="text-4xl font-bold text-blue-400 mb-2">🎯 LeadGen Pro v2</h1>
+      <p class="text-gray-400">Find intent leads - people actively seeking services</p>
+    </div>
+    
+    <!-- Search Form -->
+    <div class="bg-gray-800 rounded-lg p-6 mb-8">
+      <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4">
+        
+        <!-- Keyword -->
+        <div>
+          <label class="block text-sm text-gray-400 mb-1">Keyword</label>
+          <input type="text" id="keyword" placeholder="web developer, logo design..." 
+                 class="w-full bg-gray-700 border border-gray-600 rounded px-4 py-2 focus:border-blue-500 focus:outline-none">
         </div>
-        <div class="sources">
-          <button class="source-btn active" data-source="apollo">Apollo</button>
-          <button class="source-btn active" data-source="upwork">Upwork</button>
-          <button class="source-btn active" data-source="reddit">Reddit</button>
-          <button class="source-btn active" data-source="craigslist">Craigslist</button>
+        
+        <!-- Region -->
+        <div>
+          <label class="block text-sm text-gray-400 mb-1">Region</label>
+          <select id="region" class="w-full bg-gray-700 border border-gray-600 rounded px-4 py-2 focus:border-blue-500 focus:outline-none">
+            <option value="all">All US Cities</option>
+            <option value="sfbay">San Francisco</option>
+            <option value="newyork">New York</option>
+            <option value="losangeles">Los Angeles</option>
+            <option value="chicago">Chicago</option>
+            <option value="seattle">Seattle</option>
+            <option value="boston">Boston</option>
+            <option value="austin">Austin</option>
+            <option value="denver">Denver</option>
+            <option value="miami">Miami</option>
+            <option value="atlanta">Atlanta</option>
+            <option value="dallas">Dallas</option>
+            <option value="phoenix">Phoenix</option>
+          </select>
         </div>
-        <button class="search-btn" id="searchBtn" onclick="startSearch()">🔍 Search Leads</button>
-      </div>
-    </div>
-
-    <div class="stats">
-      <div class="stat-card">
-        <div class="number" id="totalCount">0</div>
-        <div class="label">Total Leads</div>
-      </div>
-      <div class="stat-card">
-        <div class="number" id="verifiedCount">0</div>
-        <div class="label">Verified Emails</div>
-      </div>
-      <div class="stat-card">
-        <div class="number" id="apolloCount">0</div>
-        <div class="label">From Apollo</div>
-      </div>
-      <div class="stat-card">
-        <div class="number" id="intentCount">0</div>
-        <div class="label">Job Posts (Intent)</div>
-      </div>
-    </div>
-
-    <div class="console" id="console">
-      <div class="console-line">Ready to search...</div>
-    </div>
-
-    <div class="results">
-      <div class="results-header">
-        <h2>📋 Leads Found: <span id="leadsCount">0</span></h2>
-        <div class="export-btns">
-          <button class="export-btn" onclick="exportLeads('all')">📥 Export All</button>
-          <button class="export-btn" onclick="exportLeads('verified')">✅ Export Verified</button>
+        
+        <!-- Max Results -->
+        <div>
+          <label class="block text-sm text-gray-400 mb-1">Max Results</label>
+          <select id="maxResults" class="w-full bg-gray-700 border border-gray-600 rounded px-4 py-2 focus:border-blue-500 focus:outline-none">
+            <option value="10">10 leads</option>
+            <option value="25">25 leads</option>
+            <option value="50" selected>50 leads</option>
+            <option value="100">100 leads</option>
+          </select>
+        </div>
+        
+        <!-- Search Button -->
+        <div class="flex items-end">
+          <button id="searchBtn" onclick="startSearch()" 
+                  class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded transition">
+            🔍 Search Leads
+          </button>
         </div>
       </div>
-      
-      <div class="table-container">
-        <table>
-          <thead>
-            <tr>
-              <th>Name</th>
-              <th>Email</th>
-              <th>Phone</th>
-              <th>Company</th>
-              <th>Source</th>
-              <th>Intent</th>
-              <th>Verified</th>
-              <th>Link</th>
-            </tr>
-          </thead>
-          <tbody id="resultsBody">
-          </tbody>
-        </table>
+    </div>
+    
+    <!-- Status -->
+    <div id="statusBar" class="hidden bg-gray-800 rounded-lg p-4 mb-4">
+      <div class="flex items-center">
+        <div class="animate-spin rounded-full h-5 w-5 border-b-2 border-blue-500 mr-3"></div>
+        <span id="statusText" class="text-gray-300">Searching...</span>
       </div>
-      
-      <div class="empty-state" id="emptyState">
-        <h3>No leads yet</h3>
-        <p>Enter a keyword and click Search to find leads</p>
+      <div id="logContainer" class="mt-3 text-sm text-gray-500 max-h-32 overflow-y-auto font-mono">
       </div>
     </div>
+    
+    <!-- Contact Type Filters -->
+    <div id="filterBar" class="hidden bg-gray-800 rounded-lg p-4 mb-4">
+      <div class="flex flex-wrap gap-3 items-center">
+        <span class="text-gray-400">Filter by:</span>
+        <button onclick="filterLeads('all')" class="filter-btn active px-3 py-1 rounded bg-blue-600 text-sm" data-filter="all">
+          All (<span id="count-all">0</span>)
+        </button>
+        <button onclick="filterLeads('email')" class="filter-btn px-3 py-1 rounded bg-gray-700 hover:bg-gray-600 text-sm" data-filter="email">
+          📧 Email (<span id="count-email">0</span>)
+        </button>
+        <button onclick="filterLeads('phone')" class="filter-btn px-3 py-1 rounded bg-gray-700 hover:bg-gray-600 text-sm" data-filter="phone">
+          📞 Phone (<span id="count-phone">0</span>)
+        </button>
+        <button onclick="filterLeads('whatsapp')" class="filter-btn px-3 py-1 rounded bg-gray-700 hover:bg-gray-600 text-sm" data-filter="whatsapp">
+          💬 WhatsApp (<span id="count-whatsapp">0</span>)
+        </button>
+        
+        <div class="ml-auto">
+          <button onclick="exportLeads()" class="px-4 py-1 rounded bg-green-600 hover:bg-green-700 text-sm">
+            📥 Export Excel
+          </button>
+        </div>
+      </div>
+    </div>
+    
+    <!-- Results Table -->
+    <div class="bg-gray-800 rounded-lg overflow-hidden">
+      <table class="w-full">
+        <thead class="bg-gray-700">
+          <tr>
+            <th class="px-4 py-3 text-left text-sm">#</th>
+            <th class="px-4 py-3 text-left text-sm">Name</th>
+            <th class="px-4 py-3 text-left text-sm">Contact</th>
+            <th class="px-4 py-3 text-left text-sm">Need</th>
+            <th class="px-4 py-3 text-left text-sm">Budget</th>
+            <th class="px-4 py-3 text-left text-sm">City</th>
+            <th class="px-4 py-3 text-left text-sm">Link</th>
+          </tr>
+        </thead>
+        <tbody id="resultsTable">
+          <tr>
+            <td colspan="7" class="px-4 py-8 text-center text-gray-500">
+              Enter a keyword and click Search to find leads
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    
   </div>
-
+  
   <script>
     let allLeads = [];
-
-    // Toggle source buttons
-    document.querySelectorAll('.source-btn').forEach(btn => {
-      btn.addEventListener('click', () => {
-        btn.classList.toggle('active');
-      });
-    });
-
-    function log(message, type = '') {
-      const console = document.getElementById('console');
-      const line = document.createElement('div');
-      line.className = `console-line ${type}`;
-      line.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
-      console.appendChild(line);
-      console.scrollTop = console.scrollHeight;
-    }
-
-    function updateStats() {
-      document.getElementById('totalCount').textContent = allLeads.length;
-      document.getElementById('verifiedCount').textContent = allLeads.filter(l => l.verified).length;
-      document.getElementById('apolloCount').textContent = allLeads.filter(l => l.source === 'Apollo').length;
-      document.getElementById('intentCount').textContent = allLeads.filter(l => ['Upwork', 'Reddit', 'Craigslist'].includes(l.source)).length;
-      document.getElementById('leadsCount').textContent = allLeads.length;
-    }
-
-    function addLeadToTable(lead) {
-      const tbody = document.getElementById('resultsBody');
-      const row = document.createElement('tr');
-      row.className = 'lead-row';
-      
-      const sourceClass = `badge-${lead.source.toLowerCase()}`;
-      const emailDisplay = lead.email || '-';
-      const verifiedIcon = lead.verified ? '✅' : '⏳';
-      
-      row.innerHTML = `
-        <td><strong>${lead.name || '-'}</strong></td>
-        <td>${emailDisplay}</td>
-        <td>${lead.phone || '-'}</td>
-        <td>${lead.company || '-'}</td>
-        <td><span class="badge ${sourceClass}">${lead.source}</span></td>
-        <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${lead.intent || ''}">${lead.intent?.substring(0, 50) || '-'}...</td>
-        <td class="${lead.verified ? 'verified' : 'unverified'}">${verifiedIcon}</td>
-        <td>${lead.url ? `<a href="${lead.url}" target="_blank" style="color:var(--primary)">🔗</a>` : '-'}</td>
-      `;
-      
-      tbody.appendChild(row);
-      document.getElementById('emptyState').style.display = 'none';
-    }
-
+    let currentFilter = 'all';
+    
     async function startSearch() {
       const keyword = document.getElementById('keyword').value.trim();
-      if (!keyword) return alert('Please enter a keyword');
-
-      const sources = Array.from(document.querySelectorAll('.source-btn.active'))
-        .map(btn => btn.dataset.source)
-        .join(',');
-
-      if (!sources) return alert('Please select at least one source');
-
+      if (!keyword) {
+        alert('Please enter a keyword');
+        return;
+      }
+      
+      const region = document.getElementById('region').value;
+      const maxResults = parseInt(document.getElementById('maxResults').value);
+      
       // Reset
       allLeads = [];
-      document.getElementById('resultsBody').innerHTML = '';
-      document.getElementById('emptyState').style.display = 'block';
-      document.getElementById('console').innerHTML = '';
+      document.getElementById('resultsTable').innerHTML = '';
+      document.getElementById('statusBar').classList.remove('hidden');
+      document.getElementById('filterBar').classList.add('hidden');
+      document.getElementById('logContainer').innerHTML = '';
       document.getElementById('searchBtn').disabled = true;
-      updateStats();
-
-      log(`Searching for "${keyword}"...`, 'info');
-
+      document.getElementById('searchBtn').textContent = '⏳ Searching...';
+      
       try {
-        const es = new EventSource(`/api/search?keyword=${encodeURIComponent(keyword)}&sources=${sources}&limit=100`);
-
-        es.onmessage = (e) => {
-          const data = JSON.parse(e.data);
-
-          if (data.type === 'status') {
-            log(data.message, 'info');
+        const response = await fetch('/api/search', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ keyword, region, maxResults })
+        });
+        
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          
+          const text = decoder.decode(value);
+          const lines = text.split('\n');
+          
+          for (const line of lines) {
+            if (line.startsWith('data: ')) {
+              const data = JSON.parse(line.slice(6));
+              handleEvent(data);
+            }
           }
-
-          if (data.type === 'lead') {
-            allLeads.push(data.lead);
-            addLeadToTable(data.lead);
-            updateStats();
-          }
-
-          if (data.type === 'complete') {
-            es.close();
-            log(`✅ Complete! Found ${data.total} leads, ${data.verified} verified`, 'success');
-            document.getElementById('searchBtn').disabled = false;
-          }
-
-          if (data.type === 'error') {
-            es.close();
-            log(`❌ Error: ${data.message}`, 'error');
-            document.getElementById('searchBtn').disabled = false;
-          }
-        };
-
-        es.onerror = () => {
-          es.close();
-          log('Connection closed', 'error');
-          document.getElementById('searchBtn').disabled = false;
-        };
-
-      } catch (err) {
-        log(`Error: ${err.message}`, 'error');
-        document.getElementById('searchBtn').disabled = false;
+        }
+        
+      } catch (error) {
+        console.error('Search error:', error);
+        addLog('Error: ' + error.message);
+      }
+      
+      document.getElementById('searchBtn').disabled = false;
+      document.getElementById('searchBtn').textContent = '🔍 Search Leads';
+    }
+    
+    function handleEvent(data) {
+      switch (data.type) {
+        case 'status':
+          document.getElementById('statusText').textContent = data.message;
+          addLog(data.message);
+          break;
+          
+        case 'lead':
+          allLeads.push(data.lead);
+          renderLead(data.lead);
+          updateCounts();
+          break;
+          
+        case 'complete':
+          document.getElementById('statusBar').classList.add('hidden');
+          document.getElementById('filterBar').classList.remove('hidden');
+          updateCounts();
+          addLog(`✅ Complete! Found ${data.total} leads`);
+          break;
       }
     }
-
-    function exportLeads(type) {
-      if (allLeads.length === 0) return alert('No leads to export');
-      window.location.href = `/api/export?verified=${type === 'verified'}`;
+    
+    function addLog(message) {
+      const container = document.getElementById('logContainer');
+      const time = new Date().toLocaleTimeString();
+      container.innerHTML += `[${time}] ${message}<br>`;
+      container.scrollTop = container.scrollHeight;
     }
-
-    // Check API status
-    fetch('/api/health')
-      .then(r => r.json())
-      .then(data => {
-        const apis = [];
-        if (data.apis.apollo) apis.push('Apollo ✅');
-        else apis.push('Apollo ❌');
-        if (data.apis.hunter) apis.push('Hunter ✅');
-        else apis.push('Hunter ❌');
-        log(`APIs: ${apis.join(', ')}`, 'info');
+    
+    function renderLead(lead) {
+      const table = document.getElementById('resultsTable');
+      
+      // Remove placeholder if exists
+      if (table.querySelector('td[colspan]')) {
+        table.innerHTML = '';
+      }
+      
+      const contactHtml = getContactHtml(lead);
+      
+      const row = document.createElement('tr');
+      row.className = `border-t border-gray-700 lead-row lead-type-${lead.contactType}`;
+      row.innerHTML = `
+        <td class="px-4 py-3 text-sm">${lead.id}</td>
+        <td class="px-4 py-3 text-sm font-medium">${escapeHtml(lead.name)}</td>
+        <td class="px-4 py-3 text-sm">${contactHtml}</td>
+        <td class="px-4 py-3 text-sm text-gray-300">${escapeHtml(lead.description || lead.title).substring(0, 60)}...</td>
+        <td class="px-4 py-3 text-sm">${lead.budget ? '$' + lead.budget : '-'}</td>
+        <td class="px-4 py-3 text-sm text-gray-400">${lead.city}</td>
+        <td class="px-4 py-3 text-sm">
+          <a href="${lead.url}" target="_blank" class="text-blue-400 hover:text-blue-300">🔗 View</a>
+        </td>
+      `;
+      table.appendChild(row);
+    }
+    
+    function getContactHtml(lead) {
+      let html = '';
+      
+      if (lead.email) {
+        const verifiedClass = lead.emailVerified ? 'verified' : 'unverified';
+        const icon = lead.emailVerified ? '✅' : '⚠️';
+        html += `<div class="${verifiedClass}">📧 ${icon} ${lead.email}</div>`;
+      }
+      
+      if (lead.phone) {
+        html += `<div>📞 ${lead.phone}</div>`;
+      }
+      
+      if (lead.whatsapp) {
+        html += `<div>💬 ${lead.whatsapp}</div>`;
+      }
+      
+      if (!html) {
+        html = '<span class="text-gray-500">Website only</span>';
+      }
+      
+      return html;
+    }
+    
+    function updateCounts() {
+      document.getElementById('count-all').textContent = allLeads.length;
+      document.getElementById('count-email').textContent = allLeads.filter(l => l.contactType === 'email').length;
+      document.getElementById('count-phone').textContent = allLeads.filter(l => l.contactType === 'phone').length;
+      document.getElementById('count-whatsapp').textContent = allLeads.filter(l => l.contactType === 'whatsapp').length;
+    }
+    
+    function filterLeads(type) {
+      currentFilter = type;
+      
+      // Update button styles
+      document.querySelectorAll('.filter-btn').forEach(btn => {
+        btn.classList.remove('bg-blue-600');
+        btn.classList.add('bg-gray-700');
       });
+      document.querySelector(`[data-filter="${type}"]`).classList.remove('bg-gray-700');
+      document.querySelector(`[data-filter="${type}"]`).classList.add('bg-blue-600');
+      
+      // Filter rows
+      document.querySelectorAll('.lead-row').forEach(row => {
+        if (type === 'all') {
+          row.style.display = '';
+        } else {
+          row.style.display = row.classList.contains(`lead-type-${type}`) ? '' : 'none';
+        }
+      });
+    }
+    
+    function exportLeads() {
+      const filteredLeads = currentFilter === 'all' 
+        ? allLeads 
+        : allLeads.filter(l => l.contactType === currentFilter);
+      
+      if (filteredLeads.length === 0) {
+        alert('No leads to export');
+        return;
+      }
+      
+      // Create CSV
+      const headers = ['Name', 'Email', 'Email Verified', 'Phone', 'WhatsApp', 'Description', 'Budget', 'City', 'Source', 'URL', 'Posted Date'];
+      const rows = filteredLeads.map(l => [
+        l.name,
+        l.email || '',
+        l.emailVerified ? 'Yes' : 'No',
+        l.phone || '',
+        l.whatsapp || '',
+        l.description || l.title,
+        l.budget || '',
+        l.city,
+        l.source,
+        l.url,
+        l.postedDate || ''
+      ]);
+      
+      const csv = [headers, ...rows].map(row => row.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(',')).join('\n');
+      
+      // Download
+      const blob = new Blob([csv], { type: 'text/csv' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `leads_${new Date().toISOString().split('T')[0]}.csv`;
+      a.click();
+    }
+    
+    function escapeHtml(text) {
+      const div = document.createElement('div');
+      div.textContent = text || '';
+      return div.innerHTML;
+    }
   </script>
 </body>
 </html>
