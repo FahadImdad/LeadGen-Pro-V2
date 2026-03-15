@@ -195,7 +195,8 @@ async function scrapeReddit(keyword, sendEvent) {
     
     if (response) {
       try {
-        const data = JSON.parse(response);
+        // Response might already be parsed JSON or a string
+        const data = typeof response === 'string' ? JSON.parse(response) : response;
         const posts = data?.data?.children || [];
         sendEvent('log', { level: 'info', message: `📋 Reddit returned ${posts.length} posts` });
         
