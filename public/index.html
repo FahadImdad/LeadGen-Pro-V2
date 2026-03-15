@@ -72,13 +72,35 @@
       </div>
     </div>
     
-    <!-- Status -->
+    <!-- AI Console -->
     <div id="statusBar" class="hidden bg-gray-800 rounded-lg p-4 mb-4">
-      <div class="flex items-center">
-        <div class="animate-spin rounded-full h-5 w-5 border-b-2 border-blue-500 mr-3"></div>
-        <span id="statusText" class="text-gray-300">Searching...</span>
+      <div class="flex items-center justify-between mb-3">
+        <div class="flex items-center">
+          <div class="animate-spin rounded-full h-5 w-5 border-b-2 border-green-500 mr-3"></div>
+          <span class="text-green-400 font-bold">🤖 AI Console</span>
+        </div>
+        <span id="statusText" class="text-gray-300"></span>
       </div>
-      <div id="logContainer" class="mt-3 text-sm text-gray-500 max-h-32 overflow-y-auto font-mono">
+      <div id="logContainer" class="bg-black rounded p-3 text-sm text-green-400 max-h-48 overflow-y-auto font-mono border border-green-900">
+        <div class="text-gray-500">// AI processing logs will appear here...</div>
+      </div>
+      <div class="mt-3 grid grid-cols-4 gap-2 text-center text-xs">
+        <div class="bg-gray-700 rounded p-2">
+          <div class="text-gray-400">Cities Scraped</div>
+          <div id="stat-cities" class="text-xl font-bold text-blue-400">0</div>
+        </div>
+        <div class="bg-gray-700 rounded p-2">
+          <div class="text-gray-400">Posts Analyzed</div>
+          <div id="stat-posts" class="text-xl font-bold text-yellow-400">0</div>
+        </div>
+        <div class="bg-gray-700 rounded p-2">
+          <div class="text-gray-400">Contacts Found</div>
+          <div id="stat-contacts" class="text-xl font-bold text-green-400">0</div>
+        </div>
+        <div class="bg-gray-700 rounded p-2">
+          <div class="text-gray-400">Emails Verified</div>
+          <div id="stat-verified" class="text-xl font-bold text-purple-400">0</div>
+        </div>
       </div>
     </div>
     
@@ -136,6 +158,7 @@
   <script>
     let allLeads = [];
     let currentFilter = 'all';
+    let stats = { cities: 0, posts: 0, contacts: 0, verified: 0 };
     
     async function startSearch() {
       const keyword = document.getElementById('keyword').value.trim();
@@ -149,12 +172,14 @@
       
       // Reset
       allLeads = [];
+      stats = { cities: 0, posts: 0, contacts: 0, verified: 0 };
       document.getElementById('resultsTable').innerHTML = '';
       document.getElementById('statusBar').classList.remove('hidden');
       document.getElementById('filterBar').classList.add('hidden');
-      document.getElementById('logContainer').innerHTML = '';
+      document.getElementById('logContainer').innerHTML = '<div class="text-green-500">🚀 Starting AI-powered lead search...</div>';
       document.getElementById('searchBtn').disabled = true;
       document.getElementById('searchBtn').textContent = '⏳ Searching...';
+      updateStats();
       
       try {
         const response = await fetch('/api/search', {
@@ -194,28 +219,74 @@
       switch (data.type) {
         case 'status':
           document.getElementById('statusText').textContent = data.message;
-          addLog(data.message);
+          
+          // Parse status for stats
+          if (data.message.includes('Searching') && data.message.includes('cities')) {
+            addLog('🌐 ' + data.message, 'blue');
+          } else if (data.message.includes('Searching ') && !data.message.includes('cities')) {
+            stats.cities++;
+            addLog('📍 ' + data.message, 'cyan');
+          } else if (data.message.includes('Found') && data.message.includes('listings')) {
+            addLog('📋 ' + data.message, 'yellow');
+          } else if (data.message.includes('Processing:')) {
+            stats.posts++;
+            addLog('🔍 AI analyzing: ' + data.message.replace('Processing: ', ''), 'gray');
+          } else {
+            addLog('ℹ️ ' + data.message, 'white');
+          }
+          updateStats();
           break;
           
         case 'lead':
           allLeads.push(data.lead);
+          stats.contacts++;
+          if (data.lead.emailVerified) stats.verified++;
           renderLead(data.lead);
           updateCounts();
+          updateStats();
+          
+          // Log the lead found
+          const contactType = data.lead.email ? '📧' : (data.lead.phone ? '📞' : '🌐');
+          addLog(`${contactType} LEAD FOUND: ${data.lead.name || 'Unknown'} - ${data.lead.email || data.lead.phone || 'No direct contact'}`, 'green');
           break;
           
         case 'complete':
-          document.getElementById('statusBar').classList.add('hidden');
           document.getElementById('filterBar').classList.remove('hidden');
           updateCounts();
-          addLog(`✅ Complete! Found ${data.total} leads`);
+          addLog(`\n✅ ═══════════════════════════════════`, 'green');
+          addLog(`✅ COMPLETE! Found ${data.total} intent leads`, 'green');
+          addLog(`📧 With Email: ${data.byType?.email || 0}`, 'green');
+          addLog(`📞 With Phone: ${data.byType?.phone || 0}`, 'green');
+          addLog(`✅ ═══════════════════════════════════\n`, 'green');
+          
+          // Keep console visible but stop spinner
+          document.querySelector('#statusBar .animate-spin')?.classList.add('hidden');
           break;
       }
     }
     
-    function addLog(message) {
+    function updateStats() {
+      document.getElementById('stat-cities').textContent = stats.cities;
+      document.getElementById('stat-posts').textContent = stats.posts;
+      document.getElementById('stat-contacts').textContent = stats.contacts;
+      document.getElementById('stat-verified').textContent = stats.verified;
+    }
+    
+    function addLog(message, color = 'green') {
       const container = document.getElementById('logContainer');
       const time = new Date().toLocaleTimeString();
-      container.innerHTML += `[${time}] ${message}<br>`;
+      const colors = {
+        green: 'text-green-400',
+        blue: 'text-blue-400',
+        yellow: 'text-yellow-400',
+        cyan: 'text-cyan-400',
+        gray: 'text-gray-500',
+        white: 'text-gray-300',
+        red: 'text-red-400',
+        purple: 'text-purple-400'
+      };
+      const colorClass = colors[color] || colors.green;
+      container.innerHTML += `<div class="${colorClass}">[${time}] ${message}</div>`;
       container.scrollTop = container.scrollHeight;
     }
     
