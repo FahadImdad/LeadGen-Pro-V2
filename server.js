@@ -2,16 +2,17 @@ const express = require('express');
 const cors = require('cors');
 const axios = require('axios');
 const puppeteer = require('puppeteer-core');
+require('dotenv').config();
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 app.use(express.static('public'));
 
-// API Keys
-const BRIGHTDATA_API_KEY = process.env.BRIGHTDATA_API_KEY || '5a584083-5018-4883-873c-0e5aa20b2dc4';
-const HUNTER_API_KEY = process.env.HUNTER_API_KEY || '69c57f365f57b2cf963d086bbfc5c8d0002a382b';
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY || 'AIzaSyBsBOAYZ8noNRBvnRz4-qfsQED3JmLF0n4';
+// API Keys from environment variables
+const BRIGHTDATA_API_KEY = process.env.BRIGHTDATA_API_KEY;
+const HUNTER_API_KEY = process.env.HUNTER_API_KEY;
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 
 // Bright Data Scraping Browser endpoint
 const BROWSER_WS = 'wss://brd-customer-hl_5aa18d97-zone-scraping_browser_1:nz185ss0b5p7@brd.superproxy.io:9222';
@@ -103,7 +104,7 @@ Return this exact JSON format:
 }`;
 
     const response = await axios.post(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`,
       {
         contents: [{ parts: [{ text: prompt }] }],
         generationConfig: { temperature: 0.1 }
@@ -410,6 +411,9 @@ app.post('/api/search', async (req, res) => {
       leads.push(lead);
       sendEvent('log', { level: 'success', message: `✅ LEAD #${lead.id}: ${lead.name} | ${lead.contactType.toUpperCase()}` });
       sendEvent('lead', { lead });
+      
+      // Small delay to avoid rate limiting
+      await new Promise(r => setTimeout(r, 500));
     }
   }
   
