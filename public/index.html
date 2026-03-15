@@ -51,6 +51,41 @@
           </select>
         </div>
         
+        <!-- Time Filter -->
+        <div>
+          <label class="block text-sm text-gray-400 mb-1">Posted Within</label>
+          <select id="timeFilter" class="w-full bg-gray-700 border border-gray-600 rounded px-4 py-2 focus:border-blue-500 focus:outline-none">
+            <option value="1">Last 24 hours</option>
+            <option value="3">Last 3 days</option>
+            <option value="7" selected>Last 7 days</option>
+            <option value="30">Last 30 days</option>
+          </select>
+        </div>
+      </div>
+      
+      <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mt-4">
+        <!-- Source Filter -->
+        <div>
+          <label class="block text-sm text-gray-400 mb-1">Source</label>
+          <select id="sourceFilter" class="w-full bg-gray-700 border border-gray-600 rounded px-4 py-2 focus:border-blue-500 focus:outline-none">
+            <option value="all">All Sources</option>
+            <option value="craigslist">Craigslist Only</option>
+            <option value="reddit">Reddit Only</option>
+          </select>
+        </div>
+        
+        <!-- Budget Filter -->
+        <div>
+          <label class="block text-sm text-gray-400 mb-1">Min Budget</label>
+          <select id="budgetFilter" class="w-full bg-gray-700 border border-gray-600 rounded px-4 py-2 focus:border-blue-500 focus:outline-none">
+            <option value="0">Any Budget</option>
+            <option value="100">$100+</option>
+            <option value="500">$500+</option>
+            <option value="1000">$1,000+</option>
+            <option value="5000">$5,000+</option>
+          </select>
+        </div>
+        
         <!-- Max Results -->
         <div>
           <label class="block text-sm text-gray-400 mb-1">Max Results</label>
@@ -168,6 +203,9 @@
       }
       
       const region = document.getElementById('region').value;
+      const timeFilter = parseInt(document.getElementById('timeFilter').value);
+      const sourceFilter = document.getElementById('sourceFilter').value;
+      const budgetFilter = parseInt(document.getElementById('budgetFilter').value);
       const maxResults = parseInt(document.getElementById('maxResults').value);
       
       // Reset
@@ -185,7 +223,7 @@
         const response = await fetch('/api/search', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ keyword, region, maxResults })
+          body: JSON.stringify({ keyword, region, timeFilter, sourceFilter, budgetFilter, maxResults })
         });
         
         const reader = response.body.getReader();

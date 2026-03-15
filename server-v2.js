@@ -181,11 +181,46 @@ function getContactType(priority) {
   }
 }
 
+// Scrape Reddit r/forhire
+async function scrapeReddit(keyword) {
+  const results = [];
+  try {
+    const url = `https://www.reddit.com/r/forhire/search.json?q=[Hiring]+${encodeURIComponent(keyword)}&restrict_sr=1&sort=new&limit=25`;
+    const html = await scrapeWithBrightData(url);
+    
+    if (html) {
+      try {
+        const data = JSON.parse(html);
+        const posts = data?.data?.children || [];
+        
+        for (const post of posts) {
+          const p = post.data;
+          if (p.link_flair_text?.toLowerCase().includes('hiring') || 
+              p.title?.toLowerCase().includes('[hiring]')) {
+            results.push({
+              title: p.title,
+              body: p.selftext || '',
+              url: `https://reddit.com${p.permalink}`,
+              postedDate: new Date(p.created_utc * 1000).toISOString(),
+              source: 'reddit'
+            });
+          }
+        }
+      } catch (e) {
+        console.error('Reddit JSON parse error:', e.message);
+      }
+    }
+  } catch (error) {
+    console.error('Reddit scrape error:', error.message);
+  }
+  return results;
+}
+
 // Main search endpoint
 app.post('/api/search', async (req, res) => {
-  const { keyword, region, timeFilter, maxResults = 50 } = req.body;
+  const { keyword, region, timeFilter = 7, sourceFilter = 'all', budgetFilter = 0, maxResults = 50 } = req.body;
   
-  console.log(`[${new Date().toISOString()}] Search: "${keyword}" in ${region || 'all regions'}`);
+  console.log(`[${new Date().toISOString()}] Search: "${keyword}" in ${region || 'all regions'} | Time: ${timeFilter}d | Source: ${sourceFilter} | Budget: $${budgetFilter}+`);
   
   // Set up SSE
   res.setHeader('Content-Type', 'text/event-stream');
@@ -253,7 +288,16 @@ app.post('/api/search', async (req, res) => {
         const contacts = await extractContactsWithAI(postData.body, listing.title);
         
         // Log what AI found
-        sendEvent('log', { level: 'ai', message: `🧠 AI Result: Name="${contacts.name || 'N/A'}", Email="${contacts.email || 'N/A'}", Phone="${contacts.phone || 'N/A'}"` });
+        sendEvent('log', { level: 'ai', message: `🧠 AI Result: Name="${contacts.name || 'N/A'}", Email="${contacts.email || 'N/A'}", Phone="${contacts.phone || 'N/A'}", Budget="${contacts.budget || 'N/A'}"` });
+        
+        // Check budget filter
+        if (budgetFilter > 0 && contacts.budget) {
+          const budgetNum = parseInt(contacts.budget.replace(/[^0-9]/g, ''));
+          if (budgetNum > 0 && budgetNum < budgetFilter) {
+            sendEvent('log', { level: 'reject', message: `❌ REJECTED: Budget $${budgetNum} below minimum $${budgetFilter}` });
+            continue;
+          }
+        }
         
         // Check if we have any contact info
         if (!contacts.email && !contacts.phone && !contacts.whatsapp) {
@@ -311,6 +355,65 @@ app.post('/api/search', async (req, res) => {
     } catch (error) {
       sendEvent('log', { level: 'error', message: `❌ ERROR in ${city}: ${error.message}` });
       console.error(`Error searching ${city}:`, error.message);
+    }
+  }
+  
+  // Scrape Reddit if source filter allows
+  if ((sourceFilter === 'all' || sourceFilter === 'reddit') && leads.length < maxResults) {
+    sendEvent('log', { level: 'info', message: `\n📱 Starting Reddit r/forhire search...` });
+    sendEvent('log', { level: 'brightdata', message: `🌐 BRIGHT DATA: Connecting to Reddit API...` });
+    
+    const redditPosts = await scrapeReddit(keyword);
+    sendEvent('log', { level: 'info', message: `📋 Found ${redditPosts.length} [Hiring] posts on Reddit` });
+    
+    for (const post of redditPosts) {
+      if (leads.length >= maxResults) break;
+      
+      sendEvent('log', { level: 'ai', message: `🤖 AI: Analyzing Reddit post "${post.title.substring(0, 50)}..."` });
+      
+      const contacts = await extractContactsWithAI(post.body, post.title);
+      sendEvent('log', { level: 'ai', message: `🧠 AI Result: Name="${contacts.name || 'N/A'}", Email="${contacts.email || 'N/A'}", Phone="${contacts.phone || 'N/A'}"` });
+      
+      // Check budget filter
+      if (budgetFilter > 0 && contacts.budget) {
+        const budgetNum = parseInt(contacts.budget.replace(/[^0-9]/g, ''));
+        if (budgetNum < budgetFilter) {
+          sendEvent('log', { level: 'reject', message: `❌ REJECTED: Budget $${budgetNum} below minimum $${budgetFilter}` });
+          continue;
+        }
+      }
+      
+      let emailVerified = false;
+      if (contacts.email) {
+        sendEvent('log', { level: 'hunter', message: `📧 HUNTER.IO: Verifying ${contacts.email}...` });
+        const verification = await verifyEmail(contacts.email);
+        emailVerified = verification.valid;
+        sendEvent('log', { level: emailVerified ? 'success' : 'warning', message: `${emailVerified ? '✅' : '⚠️'} HUNTER.IO: ${contacts.email} - ${emailVerified ? 'VERIFIED' : 'UNVERIFIED'}` });
+      }
+      
+      const lead = {
+        id: leads.length + 1,
+        name: contacts.name || 'Reddit Poster',
+        title: post.title,
+        description: contacts.description || post.title,
+        email: contacts.email || null,
+        emailVerified: emailVerified,
+        phone: contacts.phone || null,
+        whatsapp: contacts.whatsapp || null,
+        budget: contacts.budget || null,
+        city: 'Remote',
+        source: 'reddit',
+        url: post.url,
+        postedDate: post.postedDate,
+        scrapedAt: new Date().toISOString()
+      };
+      
+      lead.contactPriority = getContactPriority(lead);
+      lead.contactType = getContactType(lead.contactPriority);
+      
+      leads.push(lead);
+      sendEvent('log', { level: 'success', message: `✅ LEAD ACCEPTED: ${lead.name} | ${lead.contactType.toUpperCase()} | Reddit` });
+      sendEvent('lead', { lead });
     }
   }
   
