@@ -1,6 +1,7 @@
 const express = require('express');
 const cors = require('cors');
 const axios = require('axios');
+const puppeteer = require('puppeteer-core');
 
 const app = express();
 app.use(cors());
@@ -11,6 +12,9 @@ app.use(express.static('public'));
 const BRIGHTDATA_API_KEY = process.env.BRIGHTDATA_API_KEY || '5a584083-5018-4883-873c-0e5aa20b2dc4';
 const HUNTER_API_KEY = process.env.HUNTER_API_KEY || '69c57f365f57b2cf963d086bbfc5c8d0002a382b';
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || 'AIzaSyBsBOAYZ8noNRBvnRz4-qfsQED3JmLF0n4';
+
+// Bright Data Scraping Browser endpoint
+const BROWSER_WS = 'wss://brd-customer-hl_5aa18d97-zone-scraping_browser_1:nz185ss0b5p7@brd.superproxy.io:9222';
 
 // Craigslist cities
 const CRAIGSLIST_CITIES = [
@@ -24,7 +28,7 @@ const CRAIGSLIST_CITIES = [
   'orangecounty', 'inlandempire', 'ventura', 'santabarbara', 'fresno', 'bakersfield'
 ];
 
-// Scrape URL using Bright Data
+// Scrape URL using Bright Data Web Unlocker (for simple requests like Reddit JSON)
 async function scrapeWithBrightData(url) {
   try {
     const response = await axios.post('https://api.brightdata.com/request', {
@@ -37,13 +41,46 @@ async function scrapeWithBrightData(url) {
         'Authorization': `Bearer ${BRIGHTDATA_API_KEY}`
       },
       timeout: 60000,
-      // Force response as text to handle both HTML and JSON
       transformResponse: [(data) => data]
     });
     return response.data;
   } catch (error) {
     console.error('Bright Data error:', error.message);
     return null;
+  }
+}
+
+// Scrape Craigslist using Bright Data Browser API (with JS rendering)
+async function scrapeWithBrowser(url, waitSelector = null) {
+  let browser = null;
+  try {
+    browser = await puppeteer.connect({
+      browserWSEndpoint: BROWSER_WS,
+    });
+    
+    const page = await browser.newPage();
+    page.setDefaultNavigationTimeout(60000);
+    
+    await page.goto(url, { waitUntil: 'domcontentloaded' });
+    
+    // Wait for content to load
+    if (waitSelector) {
+      await page.waitForSelector(waitSelector, { timeout: 10000 }).catch(() => {});
+    } else {
+      await page.waitForTimeout(2000);
+    }
+    
+    const html = await page.content();
+    await page.close();
+    
+    return html;
+  } catch (error) {
+    console.error('Browser API error:', error.message);
+    return null;
+  } finally {
+    if (browser) {
+      await browser.close().catch(() => {});
+    }
   }
 }
 
@@ -249,28 +286,28 @@ app.post('/api/search', async (req, res) => {
   
   // Only scrape Craigslist if source filter allows
   if (sourceFilter === 'all' || sourceFilter === 'craigslist') {
-    sendEvent('log', { level: 'warning', message: `⚠️ Craigslist requires JS rendering - may return limited results` });
+    sendEvent('log', { level: 'info', message: `🚀 Using Bright Data Browser API for Craigslist (JS rendering enabled)` });
     sendEvent('status', { message: `Searching ${cities.length} cities...` });
   }
   
   for (const city of cities) {
     // Skip Craigslist if source filter is reddit only
     if (sourceFilter === 'reddit') break;
-    sendEvent('log', { level: 'brightdata', message: `🌐 BRIGHT DATA: Connecting to ${city}.craigslist.org...` });
+    sendEvent('log', { level: 'brightdata', message: `🌐 BROWSER API: Connecting to ${city}.craigslist.org...` });
     
     try {
       // Search Craigslist gigs
       const searchUrl = `https://${city}.craigslist.org/search/ggg?query=${encodeURIComponent(keyword)}`;
-      sendEvent('log', { level: 'brightdata', message: `🔗 BRIGHT DATA: Fetching ${searchUrl}` });
+      sendEvent('log', { level: 'brightdata', message: `🔗 BROWSER API: Loading ${searchUrl}` });
       
-      const searchHtml = await scrapeWithBrightData(searchUrl);
+      const searchHtml = await scrapeWithBrowser(searchUrl, '.cl-search-result');
       
       if (!searchHtml) {
-        sendEvent('log', { level: 'error', message: `❌ BRIGHT DATA: Failed to scrape ${city} - blocked or timeout` });
+        sendEvent('log', { level: 'error', message: `❌ BROWSER API: Failed to scrape ${city} - timeout` });
         continue;
       }
       
-      sendEvent('log', { level: 'brightdata', message: `✅ BRIGHT DATA: Successfully scraped ${city} (${searchHtml.length} bytes)` });
+      sendEvent('log', { level: 'brightdata', message: `✅ BROWSER API: Page rendered (${searchHtml.length} bytes)` });
       
       const listings = parseCraigslistSearch(searchHtml, city);
       sendEvent('log', { level: 'info', message: `📋 Found ${listings.length} gig listings in ${city}` });
@@ -287,8 +324,8 @@ app.post('/api/search', async (req, res) => {
         sendEvent('log', { level: 'ai', message: `🤖 AI: Analyzing post "${listing.title.substring(0, 50)}..."` });
         
         // Get full post
-        sendEvent('log', { level: 'brightdata', message: `🔗 BRIGHT DATA: Fetching full post content...` });
-        const postHtml = await scrapeWithBrightData(listing.url);
+        sendEvent('log', { level: 'brightdata', message: `🔗 BROWSER API: Loading full post...` });
+        const postHtml = await scrapeWithBrowser(listing.url, '#postingbody');
         
         if (!postHtml) {
           sendEvent('log', { level: 'reject', message: `❌ REJECTED: Could not fetch post content - skipping` });
