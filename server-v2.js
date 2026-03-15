@@ -202,41 +202,76 @@ app.post('/api/search', async (req, res) => {
   sendEvent('status', { message: `Searching ${cities.length} cities...` });
   
   for (const city of cities) {
-    sendEvent('status', { message: `Searching ${city}...` });
+    sendEvent('log', { level: 'brightdata', message: `🌐 BRIGHT DATA: Connecting to ${city}.craigslist.org...` });
     
     try {
       // Search Craigslist gigs
       const searchUrl = `https://${city}.craigslist.org/search/ggg?query=${encodeURIComponent(keyword)}`;
+      sendEvent('log', { level: 'brightdata', message: `🔗 BRIGHT DATA: Fetching ${searchUrl}` });
+      
       const searchHtml = await scrapeWithBrightData(searchUrl);
       
       if (!searchHtml) {
-        console.log(`Failed to scrape ${city}`);
+        sendEvent('log', { level: 'error', message: `❌ BRIGHT DATA: Failed to scrape ${city} - blocked or timeout` });
         continue;
       }
       
+      sendEvent('log', { level: 'brightdata', message: `✅ BRIGHT DATA: Successfully scraped ${city} (${searchHtml.length} bytes)` });
+      
       const listings = parseCraigslistSearch(searchHtml, city);
-      sendEvent('status', { message: `Found ${listings.length} listings in ${city}` });
+      sendEvent('log', { level: 'info', message: `📋 Found ${listings.length} gig listings in ${city}` });
+      
+      if (listings.length === 0) {
+        sendEvent('log', { level: 'warning', message: `⚠️ No listings found in ${city} for "${keyword}" - trying next city` });
+        continue;
+      }
       
       // Process each listing (limit per city)
       for (const listing of listings.slice(0, 5)) {
         if (leads.length >= maxResults) break;
         
-        sendEvent('status', { message: `Processing: ${listing.title.substring(0, 50)}...` });
+        sendEvent('log', { level: 'ai', message: `🤖 AI: Analyzing post "${listing.title.substring(0, 50)}..."` });
         
         // Get full post
+        sendEvent('log', { level: 'brightdata', message: `🔗 BRIGHT DATA: Fetching full post content...` });
         const postHtml = await scrapeWithBrightData(listing.url);
-        if (!postHtml) continue;
+        
+        if (!postHtml) {
+          sendEvent('log', { level: 'reject', message: `❌ REJECTED: Could not fetch post content - skipping` });
+          continue;
+        }
         
         const postData = parseCraigslistPost(postHtml);
         
+        if (!postData.body || postData.body.length < 20) {
+          sendEvent('log', { level: 'reject', message: `❌ REJECTED: Post body too short or empty - not a valid lead` });
+          continue;
+        }
+        
         // Extract contacts with AI
+        sendEvent('log', { level: 'ai', message: `🧠 AI: Extracting contacts using Gemini AI...` });
         const contacts = await extractContactsWithAI(postData.body, listing.title);
+        
+        // Log what AI found
+        sendEvent('log', { level: 'ai', message: `🧠 AI Result: Name="${contacts.name || 'N/A'}", Email="${contacts.email || 'N/A'}", Phone="${contacts.phone || 'N/A'}"` });
+        
+        // Check if we have any contact info
+        if (!contacts.email && !contacts.phone && !contacts.whatsapp) {
+          sendEvent('log', { level: 'reject', message: `⚠️ LOW PRIORITY: No direct contact found - will include as website-only lead` });
+        }
         
         // Verify email if found
         let emailVerified = false;
         if (contacts.email) {
+          sendEvent('log', { level: 'hunter', message: `📧 HUNTER.IO: Verifying email ${contacts.email}...` });
           const verification = await verifyEmail(contacts.email);
           emailVerified = verification.valid;
+          
+          if (emailVerified) {
+            sendEvent('log', { level: 'success', message: `✅ HUNTER.IO: Email VERIFIED - ${contacts.email} is valid!` });
+          } else {
+            sendEvent('log', { level: 'warning', message: `⚠️ HUNTER.IO: Email UNVERIFIED - ${contacts.email} may be invalid (${verification.status})` });
+          }
         }
         
         // Build lead object
@@ -261,15 +296,20 @@ app.post('/api/search', async (req, res) => {
         lead.contactType = getContactType(lead.contactPriority);
         
         leads.push(lead);
+        sendEvent('log', { level: 'success', message: `✅ LEAD ACCEPTED: ${lead.name} | ${lead.contactType.toUpperCase()} | ${lead.city}` });
         sendEvent('lead', { lead });
         
         // Small delay to avoid rate limiting
         await new Promise(r => setTimeout(r, 500));
       }
       
-      if (leads.length >= maxResults) break;
+      if (leads.length >= maxResults) {
+        sendEvent('log', { level: 'info', message: `🎯 Reached max results (${maxResults}) - stopping search` });
+        break;
+      }
       
     } catch (error) {
+      sendEvent('log', { level: 'error', message: `❌ ERROR in ${city}: ${error.message}` });
       console.error(`Error searching ${city}:`, error.message);
     }
   }

@@ -219,20 +219,31 @@
       switch (data.type) {
         case 'status':
           document.getElementById('statusText').textContent = data.message;
+          break;
+        
+        case 'log':
+          // Handle detailed logs from backend
+          const levelColors = {
+            brightdata: 'cyan',
+            ai: 'purple',
+            hunter: 'blue',
+            success: 'green',
+            warning: 'yellow',
+            error: 'red',
+            reject: 'red',
+            info: 'white'
+          };
+          addLog(data.message, levelColors[data.level] || 'white');
           
-          // Parse status for stats
-          if (data.message.includes('Searching') && data.message.includes('cities')) {
-            addLog('🌐 ' + data.message, 'blue');
-          } else if (data.message.includes('Searching ') && !data.message.includes('cities')) {
+          // Update stats based on log type
+          if (data.level === 'brightdata' && data.message.includes('Successfully scraped')) {
             stats.cities++;
-            addLog('📍 ' + data.message, 'cyan');
-          } else if (data.message.includes('Found') && data.message.includes('listings')) {
-            addLog('📋 ' + data.message, 'yellow');
-          } else if (data.message.includes('Processing:')) {
+          }
+          if (data.level === 'ai' && data.message.includes('Analyzing post')) {
             stats.posts++;
-            addLog('🔍 AI analyzing: ' + data.message.replace('Processing: ', ''), 'gray');
-          } else {
-            addLog('ℹ️ ' + data.message, 'white');
+          }
+          if (data.level === 'hunter' && data.message.includes('VERIFIED')) {
+            stats.verified++;
           }
           updateStats();
           break;
@@ -240,27 +251,28 @@
         case 'lead':
           allLeads.push(data.lead);
           stats.contacts++;
-          if (data.lead.emailVerified) stats.verified++;
           renderLead(data.lead);
           updateCounts();
           updateStats();
-          
-          // Log the lead found
-          const contactType = data.lead.email ? '📧' : (data.lead.phone ? '📞' : '🌐');
-          addLog(`${contactType} LEAD FOUND: ${data.lead.name || 'Unknown'} - ${data.lead.email || data.lead.phone || 'No direct contact'}`, 'green');
           break;
           
         case 'complete':
           document.getElementById('filterBar').classList.remove('hidden');
           updateCounts();
-          addLog(`\n✅ ═══════════════════════════════════`, 'green');
-          addLog(`✅ COMPLETE! Found ${data.total} intent leads`, 'green');
-          addLog(`📧 With Email: ${data.byType?.email || 0}`, 'green');
+          addLog(``, 'green');
+          addLog(`═══════════════════════════════════════════`, 'green');
+          addLog(`🎉 SEARCH COMPLETE!`, 'green');
+          addLog(`📊 Total Leads: ${data.total}`, 'green');
+          addLog(`📧 With Email: ${data.byType?.email || 0} verified`, 'green');
           addLog(`📞 With Phone: ${data.byType?.phone || 0}`, 'green');
-          addLog(`✅ ═══════════════════════════════════\n`, 'green');
+          addLog(`💬 With WhatsApp: ${data.byType?.whatsapp || 0}`, 'green');
+          addLog(`🌐 Website Only: ${data.byType?.website || 0}`, 'yellow');
+          addLog(`═══════════════════════════════════════════`, 'green');
           
           // Keep console visible but stop spinner
           document.querySelector('#statusBar .animate-spin')?.classList.add('hidden');
+          document.getElementById('searchBtn').disabled = false;
+          document.getElementById('searchBtn').textContent = '🔍 Search Leads';
           break;
       }
     }
