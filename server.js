@@ -259,15 +259,39 @@ async function scrapeReddit(keyword, sendEvent) {
         const flairLower = (p.link_flair_text || '').toLowerCase();
         const bodyLower = (p.selftext || '').toLowerCase();
         
-        // Check if this is a HIRING post (someone looking for services)
-        const isHiring = 
-          titleLower.includes('[hiring]') ||
-          flairLower.includes('hiring') ||
+        // Check if this is a FREELANCE GIG (someone needs a project done)
+        const isGig = 
+          titleLower.includes('need') ||
           titleLower.includes('looking for') ||
-          titleLower.includes('need a') ||
-          titleLower.includes('seeking') ||
-          titleLower.includes('want to hire') ||
-          (titleLower.includes('$') && !titleLower.includes('[for hire]'));
+          titleLower.includes('want') ||
+          titleLower.includes('build') ||
+          titleLower.includes('create') ||
+          titleLower.includes('help') ||
+          titleLower.includes('$') ||
+          titleLower.includes('budget') ||
+          titleLower.includes('pay') ||
+          bodyLower.includes('budget') ||
+          bodyLower.includes('pay you') ||
+          bodyLower.includes('willing to pay');
+        
+        // Exclude JOB postings (employment, not freelance)
+        const isJob = 
+          titleLower.includes('position') ||
+          titleLower.includes('salary') ||
+          titleLower.includes('full-time') ||
+          titleLower.includes('full time') ||
+          titleLower.includes('part-time') ||
+          titleLower.includes('part time') ||
+          titleLower.includes('remote opportunit') ||
+          titleLower.includes('junior') ||
+          titleLower.includes('senior') ||
+          titleLower.includes('mid-level') ||
+          titleLower.includes('years experience') ||
+          titleLower.includes('yr experience') ||
+          bodyLower.includes('salary') ||
+          bodyLower.includes('benefits') ||
+          bodyLower.includes('pto') ||
+          bodyLower.includes('401k');
         
         // Exclude [For Hire] posts (people offering services)
         const isForHire = 
@@ -281,7 +305,7 @@ async function scrapeReddit(keyword, sendEvent) {
           titleLower.includes(keyword.toLowerCase()) ||
           bodyLower.includes(keyword.toLowerCase());
         
-        if (isHiring && !isForHire && matchesKeyword) {
+        if (isGig && !isJob && !isForHire && matchesKeyword) {
           results.push({
             title: p.title,
             body: p.selftext || '',
@@ -290,7 +314,7 @@ async function scrapeReddit(keyword, sendEvent) {
             source: `reddit/r/${sub.name}`,
             author: p.author
           });
-          sendEvent('log', { level: 'success', message: `✅ [Hiring] Found: ${p.title.substring(0, 50)}...` });
+          sendEvent('log', { level: 'success', message: `✅ GIG Found: ${p.title.substring(0, 50)}...` });
         }
       }
     } catch (error) {
