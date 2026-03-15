@@ -17,16 +17,29 @@ const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 // Bright Data Scraping Browser endpoint
 const BROWSER_WS = 'wss://brd-customer-hl_5aa18d97-zone-scraping_browser_1:nz185ss0b5p7@brd.superproxy.io:9222';
 
-// Craigslist cities
+// Craigslist cities - GLOBAL (US + Canada + UK + Europe + Australia)
 const CRAIGSLIST_CITIES = [
+  // USA - Major Cities
   'sfbay', 'newyork', 'losangeles', 'chicago', 'seattle', 'boston', 'austin',
   'denver', 'miami', 'atlanta', 'dallas', 'phoenix', 'portland', 'sandiego',
   'washingtondc', 'philadelphia', 'houston', 'detroit', 'minneapolis', 'tampa',
   'orlando', 'nashville', 'charlotte', 'raleigh', 'saltlakecity', 'lasvegas',
-  'sacramento', 'sanjose', 'sandiego', 'stlouis', 'pittsburgh', 'cleveland',
+  'sacramento', 'sanjose', 'stlouis', 'pittsburgh', 'cleveland',
   'cincinnati', 'columbus', 'indianapolis', 'milwaukee', 'kansascity', 'memphis',
   'baltimore', 'richmond', 'newjersey', 'brooklyn', 'queens', 'longisland',
-  'orangecounty', 'inlandempire', 'ventura', 'santabarbara', 'fresno', 'bakersfield'
+  'orangecounty', 'inlandempire', 'ventura', 'santabarbara', 'fresno', 'bakersfield',
+  // Canada
+  'toronto', 'vancouver', 'montreal', 'calgary', 'ottawa', 'edmonton', 'winnipeg',
+  // UK & Ireland
+  'london', 'manchester', 'birmingham', 'edinburgh', 'glasgow', 'dublin',
+  // Europe
+  'amsterdam', 'berlin', 'paris', 'munich', 'hamburg', 'frankfurt', 'vienna', 'zurich', 'brussels', 'stockholm',
+  // Australia & NZ
+  'sydney', 'melbourne', 'brisbane', 'perth', 'auckland',
+  // Asia
+  'tokyo', 'hongkong', 'singapore', 'bangkok', 'seoul', 'taipei', 'manila',
+  // India
+  'bangalore', 'delhi', 'mumbai', 'chennai', 'hyderabad', 'pune', 'kolkata'
 ];
 
 // Scrape URL using Bright Data Web Unlocker (for simple requests like Reddit JSON)
@@ -399,7 +412,7 @@ app.post('/api/search', async (req, res) => {
   };
   
   const leads = [];
-  const cities = region && region !== 'all' ? [region] : CRAIGSLIST_CITIES.slice(0, 20); // 20 cities for volume
+  const cities = region && region !== 'all' ? [region] : CRAIGSLIST_CITIES.slice(0, 50); // 50 cities GLOBAL
   
   // ========== REDDIT FIRST (faster, more reliable) ==========
   if (sourceFilter === 'all' || sourceFilter === 'reddit') {
