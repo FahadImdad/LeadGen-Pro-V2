@@ -182,36 +182,46 @@ function getContactType(priority) {
 }
 
 // Scrape Reddit r/forhire
-async function scrapeReddit(keyword) {
+async function scrapeReddit(keyword, sendEvent) {
   const results = [];
   try {
-    const url = `https://www.reddit.com/r/forhire/search.json?q=[Hiring]+${encodeURIComponent(keyword)}&restrict_sr=1&sort=new&limit=25`;
-    const html = await scrapeWithBrightData(url);
+    // URL encode the brackets properly
+    const url = `https://www.reddit.com/r/forhire/search.json?q=%5BHiring%5D+${encodeURIComponent(keyword)}&restrict_sr=1&sort=new&limit=25`;
+    sendEvent('log', { level: 'brightdata', message: `🌐 BRIGHT DATA: Fetching Reddit r/forhire...` });
     
-    if (html) {
+    const response = await scrapeWithBrightData(url);
+    
+    if (response) {
       try {
-        const data = JSON.parse(html);
+        const data = JSON.parse(response);
         const posts = data?.data?.children || [];
+        sendEvent('log', { level: 'info', message: `📋 Reddit returned ${posts.length} posts` });
         
         for (const post of posts) {
           const p = post.data;
-          if (p.link_flair_text?.toLowerCase().includes('hiring') || 
-              p.title?.toLowerCase().includes('[hiring]')) {
+          const flairText = p.link_flair_text?.toLowerCase() || '';
+          const titleLower = p.title?.toLowerCase() || '';
+          
+          // Only include actual [Hiring] posts, not [For Hire]
+          if ((flairText.includes('hiring') && !flairText.includes('for hire')) || 
+              (titleLower.includes('[hiring]') && !titleLower.includes('[for hire]'))) {
             results.push({
               title: p.title,
               body: p.selftext || '',
               url: `https://reddit.com${p.permalink}`,
               postedDate: new Date(p.created_utc * 1000).toISOString(),
-              source: 'reddit'
+              source: 'reddit',
+              author: p.author
             });
+            sendEvent('log', { level: 'success', message: `✅ Found [Hiring]: ${p.title.substring(0, 50)}...` });
           }
         }
       } catch (e) {
-        console.error('Reddit JSON parse error:', e.message);
+        sendEvent('log', { level: 'error', message: `❌ Reddit JSON parse error: ${e.message}` });
       }
     }
   } catch (error) {
-    console.error('Reddit scrape error:', error.message);
+    sendEvent('log', { level: 'error', message: `❌ Reddit scrape error: ${error.message}` });
   }
   return results;
 }
@@ -234,9 +244,15 @@ app.post('/api/search', async (req, res) => {
   const leads = [];
   const cities = region && region !== 'all' ? [region] : CRAIGSLIST_CITIES.slice(0, 10); // Limit cities for speed
   
-  sendEvent('status', { message: `Searching ${cities.length} cities...` });
+  // Only scrape Craigslist if source filter allows
+  if (sourceFilter === 'all' || sourceFilter === 'craigslist') {
+    sendEvent('log', { level: 'warning', message: `⚠️ Craigslist requires JS rendering - may return limited results` });
+    sendEvent('status', { message: `Searching ${cities.length} cities...` });
+  }
   
   for (const city of cities) {
+    // Skip Craigslist if source filter is reddit only
+    if (sourceFilter === 'reddit') break;
     sendEvent('log', { level: 'brightdata', message: `🌐 BRIGHT DATA: Connecting to ${city}.craigslist.org...` });
     
     try {
@@ -363,7 +379,7 @@ app.post('/api/search', async (req, res) => {
     sendEvent('log', { level: 'info', message: `\n📱 Starting Reddit r/forhire search...` });
     sendEvent('log', { level: 'brightdata', message: `🌐 BRIGHT DATA: Connecting to Reddit API...` });
     
-    const redditPosts = await scrapeReddit(keyword);
+    const redditPosts = await scrapeReddit(keyword, sendEvent);
     sendEvent('log', { level: 'info', message: `📋 Found ${redditPosts.length} [Hiring] posts on Reddit` });
     
     for (const post of redditPosts) {
