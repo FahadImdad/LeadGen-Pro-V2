@@ -220,27 +220,26 @@ function getContactType(priority) {
   }
 }
 
-// Scrape Reddit for [Hiring] posts across multiple subreddits
+// Scrape Reddit for freelance GIGS (not job postings)
 async function scrapeReddit(keyword, sendEvent) {
   const results = [];
   const axios = require('axios');
   
-  // Multiple subreddits with hiring posts
+  // Subreddits with freelance gigs
   const subreddits = [
-    { name: 'forhire', searchType: 'search' },
-    { name: 'slavelabour', searchType: 'search' },
-    { name: 'Jobs4Bitcoins', searchType: 'search' },
-    { name: 'freelance_forhire', searchType: 'hot' },
-    { name: 'jobbit', searchType: 'hot' }
+    { name: 'slavelabour', type: 'task', searchType: 'new' },  // Best source - [TASK] posts
+    { name: 'forhire', type: 'gig', searchType: 'search' },
+    { name: 'Jobs4Bitcoins', type: 'task', searchType: 'new' },
+    { name: 'freelance_forhire', type: 'gig', searchType: 'new' }
   ];
   
   for (const sub of subreddits) {
     try {
       let url;
       if (sub.searchType === 'search') {
-        url = `https://www.reddit.com/r/${sub.name}/search.json?q=${encodeURIComponent(keyword)}&restrict_sr=1&sort=new&limit=50`;
+        url = `https://www.reddit.com/r/${sub.name}/search.json?q=${encodeURIComponent(keyword)}&restrict_sr=1&sort=new&limit=100`;
       } else {
-        url = `https://www.reddit.com/r/${sub.name}/hot.json?limit=50`;
+        url = `https://www.reddit.com/r/${sub.name}/new.json?limit=100`;
       }
       
       sendEvent('log', { level: 'brightdata', message: `🌐 Fetching r/${sub.name}...` });
@@ -259,72 +258,65 @@ async function scrapeReddit(keyword, sendEvent) {
         const flairLower = (p.link_flair_text || '').toLowerCase();
         const bodyLower = (p.selftext || '').toLowerCase();
         
-        // Check if this is a FREELANCE GIG (someone needs a project done)
-        const isGig = 
-          titleLower.includes('need') ||
-          titleLower.includes('looking for') ||
-          titleLower.includes('want') ||
-          titleLower.includes('build') ||
-          titleLower.includes('create') ||
-          titleLower.includes('help') ||
-          titleLower.includes('$') ||
-          titleLower.includes('budget') ||
-          titleLower.includes('pay') ||
-          bodyLower.includes('budget') ||
-          bodyLower.includes('pay you') ||
-          bodyLower.includes('willing to pay');
+        let isValidGig = false;
         
-        // Exclude JOB postings (employment, not freelance gigs)
-        const isJob = 
-          titleLower.includes('position') ||
-          titleLower.includes('salary') ||
-          titleLower.includes('full-time') ||
-          titleLower.includes('full time') ||
-          titleLower.includes('part-time') ||
-          titleLower.includes('part time') ||
-          titleLower.includes('remote opportunit') ||
-          titleLower.includes('junior') ||
-          titleLower.includes('senior') ||
-          titleLower.includes('mid-level') ||
-          titleLower.includes('years experience') ||
-          titleLower.includes('yr experience') ||
-          titleLower.includes('/yr') ||
-          titleLower.includes('per year') ||
-          titleLower.includes('annually') ||
-          titleLower.includes('contract') ||
-          titleLower.includes('contractor') ||
-          titleLower.includes('w2') ||
-          titleLower.includes('w-2') ||
-          titleLower.includes('c2c') ||
-          titleLower.includes('hiring for') ||
-          titleLower.includes('is hiring') ||
-          titleLower.includes('we are hiring') ||
-          titleLower.includes('company is hiring') ||
-          titleLower.includes('onsite') ||
-          titleLower.includes('on-site') ||
-          titleLower.includes('hybrid') ||
-          bodyLower.includes('salary') ||
-          bodyLower.includes('benefits') ||
-          bodyLower.includes('pto') ||
-          bodyLower.includes('401k') ||
-          bodyLower.includes('health insurance') ||
-          bodyLower.includes('annual') ||
-          bodyLower.includes('/yr') ||
-          bodyLower.includes('per year');
+        // Different detection logic per subreddit type
+        if (sub.type === 'task') {
+          // For r/slavelabour style: [TASK] = client needs work, [OFFER] = freelancer offering
+          const isTask = titleLower.includes('[task]') || flairLower.includes('task');
+          const isOffer = titleLower.includes('[offer]') || flairLower.includes('offer');
+          isValidGig = isTask && !isOffer;
+        } else {
+          // For r/forhire style: need more complex filtering
+          const isGig = 
+            titleLower.includes('need') ||
+            titleLower.includes('looking for') ||
+            titleLower.includes('want') ||
+            titleLower.includes('build') ||
+            titleLower.includes('help') ||
+            titleLower.includes('$') ||
+            titleLower.includes('budget') ||
+            bodyLower.includes('budget') ||
+            bodyLower.includes('pay you');
+          
+          // Exclude JOB postings
+          const isJob = 
+            titleLower.includes('position') ||
+            titleLower.includes('salary') ||
+            titleLower.includes('full-time') ||
+            titleLower.includes('part-time') ||
+            titleLower.includes('remote opportunit') ||
+            titleLower.includes('junior') ||
+            titleLower.includes('senior') ||
+            titleLower.includes('mid-level') ||
+            titleLower.includes('years experience') ||
+            titleLower.includes('/yr') ||
+            titleLower.includes('per year') ||
+            titleLower.includes('contract') ||
+            titleLower.includes('is hiring') ||
+            titleLower.includes('company') ||
+            titleLower.includes('onsite') ||
+            titleLower.includes('hybrid') ||
+            bodyLower.includes('salary') ||
+            bodyLower.includes('benefits') ||
+            bodyLower.includes('/yr');
+          
+          // Exclude [For Hire]
+          const isForHire = 
+            titleLower.includes('[for hire]') ||
+            titleLower.includes('for hire') ||
+            flairLower.includes('for hire');
+          
+          isValidGig = isGig && !isJob && !isForHire;
+        }
         
-        // Exclude [For Hire] posts (people offering services)
-        const isForHire = 
-          titleLower.includes('[for hire]') ||
-          titleLower.includes('for hire') ||
-          flairLower.includes('for hire') ||
-          titleLower.startsWith('offering');
-        
-        // Must match keyword
+        // Must match keyword (for search results it already does, but check for /new)
         const matchesKeyword = 
+          sub.searchType === 'search' || 
           titleLower.includes(keyword.toLowerCase()) ||
           bodyLower.includes(keyword.toLowerCase());
         
-        if (isGig && !isJob && !isForHire && matchesKeyword) {
+        if (isValidGig && matchesKeyword) {
           results.push({
             title: p.title,
             body: p.selftext || '',
