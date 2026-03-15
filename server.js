@@ -1,319 +1,455 @@
-/**
- * LeadGen Pro v2 - Intent-Based Lead Generation
- * Uses Apify for all scraping (bypasses blocks)
- */
-
-require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
-const path = require('path');
-const XLSX = require('xlsx');
+const axios = require('axios');
 
 const app = express();
 app.use(cors());
 app.use(express.json());
-app.use(express.static(path.join(__dirname, 'public')));
+app.use(express.static('public'));
 
 // API Keys
-const HUNTER_API_KEY = process.env.HUNTER_API_KEY;
-const APOLLO_API_KEY = process.env.APOLLO_API_KEY;
-const APIFY_API_KEY = process.env.APIFY_API_KEY;
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+const BRIGHTDATA_API_KEY = process.env.BRIGHTDATA_API_KEY || '5a584083-5018-4883-873c-0e5aa20b2dc4';
+const HUNTER_API_KEY = process.env.HUNTER_API_KEY || '69c57f365f57b2cf963d086bbfc5c8d0002a382b';
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY || 'AIzaSyBsBOAYZ8noNRBvnRz4-qfsQED3JmLF0n4';
 
-console.log('🔑 API Keys:', {
-  hunter: !!HUNTER_API_KEY,
-  apollo: !!APOLLO_API_KEY,
-  apify: !!APIFY_API_KEY,
-  gemini: !!GEMINI_API_KEY
-});
+// Craigslist cities
+const CRAIGSLIST_CITIES = [
+  'sfbay', 'newyork', 'losangeles', 'chicago', 'seattle', 'boston', 'austin',
+  'denver', 'miami', 'atlanta', 'dallas', 'phoenix', 'portland', 'sandiego',
+  'washingtondc', 'philadelphia', 'houston', 'detroit', 'minneapolis', 'tampa',
+  'orlando', 'nashville', 'charlotte', 'raleigh', 'saltlakecity', 'lasvegas',
+  'sacramento', 'sanjose', 'sandiego', 'stlouis', 'pittsburgh', 'cleveland',
+  'cincinnati', 'columbus', 'indianapolis', 'milwaukee', 'kansascity', 'memphis',
+  'baltimore', 'richmond', 'newjersey', 'brooklyn', 'queens', 'longisland',
+  'orangecounty', 'inlandempire', 'ventura', 'santabarbara', 'fresno', 'bakersfield'
+];
 
-let allLeads = [];
-
-// ============================================================
-// APIFY GOOGLE SEARCH - Main scraping method
-// ============================================================
-async function searchViaApify(keyword, source = 'all') {
-  if (!APIFY_API_KEY) {
-    console.log('⚠️ Apify not configured');
-    return [];
-  }
-
+// Scrape URL using Bright Data
+async function scrapeWithBrightData(url) {
   try {
-    console.log(`🔍 Searching via Apify for "${keyword}"...`);
-    
-    // Specific queries for actual job posts
-    const queries = [];
-    // Reddit r/forhire [Hiring] posts only
-    queries.push(`site:reddit.com/r/forhire "[Hiring]" ${keyword}`);
-    // Upwork actual job posts (not category pages)
-    queries.push(`site:upwork.com/freelance-jobs "${keyword}" -/location -/skill`);
-    // Craigslist gigs
-    queries.push(`site:craigslist.org/gig "${keyword}"`);
-
-    // Use Apify's Google Search Results Scraper
-    const response = await fetch(
-      `https://api.apify.com/v2/acts/apify~google-search-scraper/run-sync-get-dataset-items?token=${APIFY_API_KEY}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          queries: queries.join('\n'),
-          maxPagesPerQuery: 1,
-          resultsPerPage: 50,
-          countryCode: 'us',
-          languageCode: 'en',
-          mobileResults: false,
-          includeUnfilteredResults: false
-        })
-      }
-    );
-
-    if (!response.ok) {
-      console.log('❌ Apify Google error:', response.status);
-      return [];
-    }
-
-    const results = await response.json();
-    const leads = [];
-
-    for (const item of results) {
-      if (!item.organicResults) continue;
-      
-      for (const result of item.organicResults) {
-        const url = result.url || '';
-        const title = result.title || '';
-        const snippet = result.description || '';
-        
-        // Determine source
-        let leadSource = 'Web';
-        if (url.includes('reddit.com')) leadSource = 'Reddit';
-        else if (url.includes('craigslist.org')) leadSource = 'Craigslist';
-        else if (url.includes('upwork.com')) leadSource = 'Upwork';
-        
-        // Extract email if present
-        const emailMatch = snippet.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
-        
-        // Skip [For Hire] posts and category pages
-        const titleLower = title.toLowerCase();
-        const urlLower = url.toLowerCase();
-        
-        // Skip non-job posts
-        if (titleLower.includes('[for hire]') || titleLower.includes('for hire')) continue;
-        if (titleLower.includes('how to') || titleLower.includes('where to')) continue;
-        if (titleLower.includes('best place') || titleLower.includes('recommend')) continue;
-        
-        // Skip Upwork category/location pages
-        if (urlLower.includes('upwork.com/freelance-jobs/') && !urlLower.includes('/job/')) {
-          // Only keep if it's NOT a category page (has specific job ID or query)
-          if (urlLower.match(/\/freelance-jobs\/[a-z-]+\/?$/)) continue;
-        }
-        
-        // Skip Reddit discussion posts (not r/forhire)
-        if (url.includes('reddit.com') && !url.includes('/r/forhire/') && !url.includes('/r/hiring/')) continue;
-        
-        leads.push({
-          name: leadSource === 'Reddit' ? title.match(/\[Hiring\]\s*(.*?)(?:\s*[\[\(]|$)/i)?.[1] || 'Reddit Poster' : 'Lead',
-          email: emailMatch?.[0] || '',
-          phone: '-',
-          company: '-',
-          title: title.substring(0, 100),
-          source: leadSource,
-          intent: snippet.substring(0, 200),
-          intentScore: leadSource === 'Reddit' && title.toLowerCase().includes('[hiring]') ? 10 : 8,
-          url: url,
-          verified: false
-        });
-      }
-    }
-
-    console.log(`✅ Apify: Found ${leads.length} leads`);
-    return leads;
-
-  } catch (err) {
-    console.log('❌ Apify error:', err.message);
-    return [];
-  }
-}
-
-// ============================================================
-// APOLLO.IO - B2B Contacts (requires paid plan)
-// ============================================================
-async function searchApollo(keyword, options = {}) {
-  if (!APOLLO_API_KEY) return [];
-
-  try {
-    const response = await fetch('https://api.apollo.io/v1/mixed_people/search', {
-      method: 'POST',
+    const response = await axios.post('https://api.brightdata.com/request', {
+      zone: 'web_unlocker_1',
+      url: url,
+      format: 'raw'
+    }, {
       headers: {
         'Content-Type': 'application/json',
-        'X-Api-Key': APOLLO_API_KEY
+        'Authorization': `Bearer ${BRIGHTDATA_API_KEY}`
       },
-      body: JSON.stringify({
-        q_keywords: keyword,
-        per_page: options.limit || 25
-      })
+      timeout: 60000
     });
-
-    if (!response.ok) return [];
-
-    const data = await response.json();
-    return (data.people || []).map(p => ({
-      name: p.name || `${p.first_name} ${p.last_name}`,
-      email: p.email,
-      phone: p.phone_numbers?.[0]?.number || '-',
-      company: p.organization?.name || '-',
-      title: p.title || '-',
-      source: 'Apollo',
-      intent: `${p.title} at ${p.organization?.name || 'Unknown'}`,
-      intentScore: 7,
-      verified: !!p.email
-    }));
-
-  } catch (err) {
-    console.log('❌ Apollo error:', err.message);
-    return [];
+    return response.data;
+  } catch (error) {
+    console.error('Bright Data error:', error.message);
+    return null;
   }
 }
 
-// ============================================================
-// HUNTER.IO - Email Verification
-// ============================================================
-async function verifyEmail(email) {
-  if (!HUNTER_API_KEY || !email || !email.includes('@')) {
-    return { valid: false };
-  }
-
+// Extract contact info using Gemini AI
+async function extractContactsWithAI(text, title) {
   try {
-    const response = await fetch(
-      `https://api.hunter.io/v2/email-verifier?email=${encodeURIComponent(email)}&api_key=${HUNTER_API_KEY}`
+    const prompt = `Extract contact information from this job post. Return JSON only, no explanation.
+
+Title: ${title}
+Post: ${text}
+
+Return this exact JSON format:
+{
+  "name": "person's name or null",
+  "email": "email address or null", 
+  "phone": "phone number or null",
+  "whatsapp": "whatsapp number or null",
+  "budget": "budget mentioned or null",
+  "description": "brief description of what they need (max 100 chars)"
+}`;
+
+    const response = await axios.post(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`,
+      {
+        contents: [{ parts: [{ text: prompt }] }],
+        generationConfig: { temperature: 0.1 }
+      },
+      { timeout: 30000 }
     );
 
-    if (!response.ok) return { valid: false };
+    const responseText = response.data.candidates[0]?.content?.parts[0]?.text || '{}';
+    const jsonMatch = responseText.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      return JSON.parse(jsonMatch[0]);
+    }
+    return {};
+  } catch (error) {
+    console.error('Gemini error:', error.message);
+    return {};
+  }
+}
 
-    const data = await response.json();
-    return {
-      valid: data.data?.status === 'valid' || data.data?.status === 'accept_all'
+// Verify email with Hunter.io
+async function verifyEmail(email) {
+  if (!email) return { valid: false };
+  try {
+    const response = await axios.get(
+      `https://api.hunter.io/v2/email-verifier?email=${encodeURIComponent(email)}&api_key=${HUNTER_API_KEY}`,
+      { timeout: 10000 }
+    );
+    const status = response.data?.data?.status;
+    return { 
+      valid: status === 'valid' || status === 'accept_all',
+      status: status
     };
-
-  } catch (err) {
+  } catch (error) {
+    console.error('Hunter error:', error.message);
     return { valid: false };
   }
 }
 
-// ============================================================
-// MAIN API: /api/search
-// ============================================================
-app.get('/api/search', async (req, res) => {
-  const { keyword, sources = 'all', limit = 50 } = req.query;
-
-  if (!keyword) {
-    return res.status(400).json({ error: 'Keyword required' });
+// Parse Craigslist search results
+function parseCraigslistSearch(html, city) {
+  const results = [];
+  
+  // Match listing items
+  const listingRegex = /<li[^>]*class="[^"]*cl-search-result[^"]*"[^>]*>[\s\S]*?<a[^>]*href="([^"]+)"[^>]*>[\s\S]*?<span[^>]*class="label"[^>]*>([^<]+)<\/span>[\s\S]*?<\/li>/gi;
+  
+  let match;
+  while ((match = listingRegex.exec(html)) !== null) {
+    const url = match[1];
+    const title = match[2].trim();
+    
+    if (url && title) {
+      results.push({
+        url: url.startsWith('http') ? url : `https://${city}.craigslist.org${url}`,
+        title: title,
+        city: city
+      });
+    }
   }
+  
+  // Alternative parsing for different HTML structure
+  if (results.length === 0) {
+    const altRegex = /href="(\/[^"]*\/gig\/[^"]+)"[^>]*>([^<]+)</gi;
+    while ((match = altRegex.exec(html)) !== null) {
+      results.push({
+        url: `https://${city}.craigslist.org${match[1]}`,
+        title: match[2].trim(),
+        city: city
+      });
+    }
+  }
+  
+  return results;
+}
 
-  // SSE setup
+// Parse individual Craigslist post
+function parseCraigslistPost(html) {
+  let body = '';
+  
+  // Extract post body
+  const bodyMatch = html.match(/<section[^>]*id="postingbody"[^>]*>([\s\S]*?)<\/section>/i);
+  if (bodyMatch) {
+    body = bodyMatch[1]
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+  
+  // Extract posted date
+  let postedDate = null;
+  const dateMatch = html.match(/datetime="([^"]+)"/);
+  if (dateMatch) {
+    postedDate = dateMatch[1];
+  }
+  
+  return { body, postedDate };
+}
+
+// Determine contact priority
+function getContactPriority(lead) {
+  if (lead.email && lead.emailVerified) return 1; // Email
+  if (lead.phone) return 2; // Phone
+  if (lead.whatsapp) return 3; // WhatsApp
+  if (lead.email && !lead.emailVerified) return 4; // Unverified email
+  return 6; // Website only
+}
+
+function getContactType(priority) {
+  switch(priority) {
+    case 1: return 'email';
+    case 2: return 'phone';
+    case 3: return 'whatsapp';
+    case 4: return 'email_unverified';
+    default: return 'website';
+  }
+}
+
+// Scrape Reddit r/forhire
+async function scrapeReddit(keyword) {
+  const results = [];
+  try {
+    const url = `https://www.reddit.com/r/forhire/search.json?q=[Hiring]+${encodeURIComponent(keyword)}&restrict_sr=1&sort=new&limit=25`;
+    const html = await scrapeWithBrightData(url);
+    
+    if (html) {
+      try {
+        const data = JSON.parse(html);
+        const posts = data?.data?.children || [];
+        
+        for (const post of posts) {
+          const p = post.data;
+          if (p.link_flair_text?.toLowerCase().includes('hiring') || 
+              p.title?.toLowerCase().includes('[hiring]')) {
+            results.push({
+              title: p.title,
+              body: p.selftext || '',
+              url: `https://reddit.com${p.permalink}`,
+              postedDate: new Date(p.created_utc * 1000).toISOString(),
+              source: 'reddit'
+            });
+          }
+        }
+      } catch (e) {
+        console.error('Reddit JSON parse error:', e.message);
+      }
+    }
+  } catch (error) {
+    console.error('Reddit scrape error:', error.message);
+  }
+  return results;
+}
+
+// Main search endpoint
+app.post('/api/search', async (req, res) => {
+  const { keyword, region, timeFilter = 7, sourceFilter = 'all', budgetFilter = 0, maxResults = 50 } = req.body;
+  
+  console.log(`[${new Date().toISOString()}] Search: "${keyword}" in ${region || 'all regions'} | Time: ${timeFilter}d | Source: ${sourceFilter} | Budget: $${budgetFilter}+`);
+  
+  // Set up SSE
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
-
-  const send = (type, data) => {
+  
+  const sendEvent = (type, data) => {
     res.write(`data: ${JSON.stringify({ type, ...data })}\n\n`);
   };
-
-  try {
-    let results = [];
-
-    send('status', { message: `Searching for "${keyword}"...` });
-
-    // Apollo (if configured and paid)
-    if (sources.includes('apollo') && APOLLO_API_KEY) {
-      send('status', { message: '🔍 Searching Apollo.io...' });
-      const apolloResults = await searchApollo(keyword, { limit: 25 });
-      results = results.concat(apolloResults);
-    }
-
-    // Apify scraping for Reddit/Upwork/Craigslist
-    send('status', { message: '🔍 Searching job boards via Apify...' });
-    const apifyResults = await searchViaApify(keyword, sources);
-    results = results.concat(apifyResults);
-
-    send('status', { message: `Found ${results.length} leads. Verifying emails...` });
-
-    // Verify emails
-    let verified = 0;
-    for (let i = 0; i < Math.min(results.length, 10); i++) { // Limit verification to save credits
-      const lead = results[i];
-      if (lead.email && !lead.verified) {
-        const v = await verifyEmail(lead.email);
-        lead.verified = v.valid;
-        if (v.valid) verified++;
+  
+  const leads = [];
+  const cities = region && region !== 'all' ? [region] : CRAIGSLIST_CITIES.slice(0, 10); // Limit cities for speed
+  
+  sendEvent('status', { message: `Searching ${cities.length} cities...` });
+  
+  for (const city of cities) {
+    sendEvent('log', { level: 'brightdata', message: `🌐 BRIGHT DATA: Connecting to ${city}.craigslist.org...` });
+    
+    try {
+      // Search Craigslist gigs
+      const searchUrl = `https://${city}.craigslist.org/search/ggg?query=${encodeURIComponent(keyword)}`;
+      sendEvent('log', { level: 'brightdata', message: `🔗 BRIGHT DATA: Fetching ${searchUrl}` });
+      
+      const searchHtml = await scrapeWithBrightData(searchUrl);
+      
+      if (!searchHtml) {
+        sendEvent('log', { level: 'error', message: `❌ BRIGHT DATA: Failed to scrape ${city} - blocked or timeout` });
+        continue;
       }
-      send('lead', { lead, index: i + 1, total: results.length });
+      
+      sendEvent('log', { level: 'brightdata', message: `✅ BRIGHT DATA: Successfully scraped ${city} (${searchHtml.length} bytes)` });
+      
+      const listings = parseCraigslistSearch(searchHtml, city);
+      sendEvent('log', { level: 'info', message: `📋 Found ${listings.length} gig listings in ${city}` });
+      
+      if (listings.length === 0) {
+        sendEvent('log', { level: 'warning', message: `⚠️ No listings found in ${city} for "${keyword}" - trying next city` });
+        continue;
+      }
+      
+      // Process each listing (limit per city)
+      for (const listing of listings.slice(0, 5)) {
+        if (leads.length >= maxResults) break;
+        
+        sendEvent('log', { level: 'ai', message: `🤖 AI: Analyzing post "${listing.title.substring(0, 50)}..."` });
+        
+        // Get full post
+        sendEvent('log', { level: 'brightdata', message: `🔗 BRIGHT DATA: Fetching full post content...` });
+        const postHtml = await scrapeWithBrightData(listing.url);
+        
+        if (!postHtml) {
+          sendEvent('log', { level: 'reject', message: `❌ REJECTED: Could not fetch post content - skipping` });
+          continue;
+        }
+        
+        const postData = parseCraigslistPost(postHtml);
+        
+        if (!postData.body || postData.body.length < 20) {
+          sendEvent('log', { level: 'reject', message: `❌ REJECTED: Post body too short or empty - not a valid lead` });
+          continue;
+        }
+        
+        // Extract contacts with AI
+        sendEvent('log', { level: 'ai', message: `🧠 AI: Extracting contacts using Gemini AI...` });
+        const contacts = await extractContactsWithAI(postData.body, listing.title);
+        
+        // Log what AI found
+        sendEvent('log', { level: 'ai', message: `🧠 AI Result: Name="${contacts.name || 'N/A'}", Email="${contacts.email || 'N/A'}", Phone="${contacts.phone || 'N/A'}", Budget="${contacts.budget || 'N/A'}"` });
+        
+        // Check budget filter
+        if (budgetFilter > 0 && contacts.budget) {
+          const budgetNum = parseInt(contacts.budget.replace(/[^0-9]/g, ''));
+          if (budgetNum > 0 && budgetNum < budgetFilter) {
+            sendEvent('log', { level: 'reject', message: `❌ REJECTED: Budget $${budgetNum} below minimum $${budgetFilter}` });
+            continue;
+          }
+        }
+        
+        // Check if we have any contact info
+        if (!contacts.email && !contacts.phone && !contacts.whatsapp) {
+          sendEvent('log', { level: 'reject', message: `⚠️ LOW PRIORITY: No direct contact found - will include as website-only lead` });
+        }
+        
+        // Verify email if found
+        let emailVerified = false;
+        if (contacts.email) {
+          sendEvent('log', { level: 'hunter', message: `📧 HUNTER.IO: Verifying email ${contacts.email}...` });
+          const verification = await verifyEmail(contacts.email);
+          emailVerified = verification.valid;
+          
+          if (emailVerified) {
+            sendEvent('log', { level: 'success', message: `✅ HUNTER.IO: Email VERIFIED - ${contacts.email} is valid!` });
+          } else {
+            sendEvent('log', { level: 'warning', message: `⚠️ HUNTER.IO: Email UNVERIFIED - ${contacts.email} may be invalid (${verification.status})` });
+          }
+        }
+        
+        // Build lead object
+        const lead = {
+          id: leads.length + 1,
+          name: contacts.name || 'Unknown',
+          title: listing.title,
+          description: contacts.description || listing.title,
+          email: contacts.email || null,
+          emailVerified: emailVerified,
+          phone: contacts.phone || null,
+          whatsapp: contacts.whatsapp || null,
+          budget: contacts.budget || null,
+          city: city,
+          source: 'craigslist',
+          url: listing.url,
+          postedDate: postData.postedDate,
+          scrapedAt: new Date().toISOString()
+        };
+        
+        lead.contactPriority = getContactPriority(lead);
+        lead.contactType = getContactType(lead.contactPriority);
+        
+        leads.push(lead);
+        sendEvent('log', { level: 'success', message: `✅ LEAD ACCEPTED: ${lead.name} | ${lead.contactType.toUpperCase()} | ${lead.city}` });
+        sendEvent('lead', { lead });
+        
+        // Small delay to avoid rate limiting
+        await new Promise(r => setTimeout(r, 500));
+      }
+      
+      if (leads.length >= maxResults) {
+        sendEvent('log', { level: 'info', message: `🎯 Reached max results (${maxResults}) - stopping search` });
+        break;
+      }
+      
+    } catch (error) {
+      sendEvent('log', { level: 'error', message: `❌ ERROR in ${city}: ${error.message}` });
+      console.error(`Error searching ${city}:`, error.message);
     }
-
-    // Send remaining leads
-    for (let i = 10; i < results.length; i++) {
-      send('lead', { lead: results[i], index: i + 1, total: results.length });
-    }
-
-    allLeads = results;
-
-    send('complete', { total: results.length, verified, leads: results });
-    res.end();
-
-  } catch (err) {
-    send('error', { message: err.message });
-    res.end();
   }
+  
+  // Scrape Reddit if source filter allows
+  if ((sourceFilter === 'all' || sourceFilter === 'reddit') && leads.length < maxResults) {
+    sendEvent('log', { level: 'info', message: `\n📱 Starting Reddit r/forhire search...` });
+    sendEvent('log', { level: 'brightdata', message: `🌐 BRIGHT DATA: Connecting to Reddit API...` });
+    
+    const redditPosts = await scrapeReddit(keyword);
+    sendEvent('log', { level: 'info', message: `📋 Found ${redditPosts.length} [Hiring] posts on Reddit` });
+    
+    for (const post of redditPosts) {
+      if (leads.length >= maxResults) break;
+      
+      sendEvent('log', { level: 'ai', message: `🤖 AI: Analyzing Reddit post "${post.title.substring(0, 50)}..."` });
+      
+      const contacts = await extractContactsWithAI(post.body, post.title);
+      sendEvent('log', { level: 'ai', message: `🧠 AI Result: Name="${contacts.name || 'N/A'}", Email="${contacts.email || 'N/A'}", Phone="${contacts.phone || 'N/A'}"` });
+      
+      // Check budget filter
+      if (budgetFilter > 0 && contacts.budget) {
+        const budgetNum = parseInt(contacts.budget.replace(/[^0-9]/g, ''));
+        if (budgetNum < budgetFilter) {
+          sendEvent('log', { level: 'reject', message: `❌ REJECTED: Budget $${budgetNum} below minimum $${budgetFilter}` });
+          continue;
+        }
+      }
+      
+      let emailVerified = false;
+      if (contacts.email) {
+        sendEvent('log', { level: 'hunter', message: `📧 HUNTER.IO: Verifying ${contacts.email}...` });
+        const verification = await verifyEmail(contacts.email);
+        emailVerified = verification.valid;
+        sendEvent('log', { level: emailVerified ? 'success' : 'warning', message: `${emailVerified ? '✅' : '⚠️'} HUNTER.IO: ${contacts.email} - ${emailVerified ? 'VERIFIED' : 'UNVERIFIED'}` });
+      }
+      
+      const lead = {
+        id: leads.length + 1,
+        name: contacts.name || 'Reddit Poster',
+        title: post.title,
+        description: contacts.description || post.title,
+        email: contacts.email || null,
+        emailVerified: emailVerified,
+        phone: contacts.phone || null,
+        whatsapp: contacts.whatsapp || null,
+        budget: contacts.budget || null,
+        city: 'Remote',
+        source: 'reddit',
+        url: post.url,
+        postedDate: post.postedDate,
+        scrapedAt: new Date().toISOString()
+      };
+      
+      lead.contactPriority = getContactPriority(lead);
+      lead.contactType = getContactType(lead.contactPriority);
+      
+      leads.push(lead);
+      sendEvent('log', { level: 'success', message: `✅ LEAD ACCEPTED: ${lead.name} | ${lead.contactType.toUpperCase()} | Reddit` });
+      sendEvent('lead', { lead });
+    }
+  }
+  
+  sendEvent('complete', { 
+    total: leads.length,
+    byType: {
+      email: leads.filter(l => l.contactType === 'email').length,
+      phone: leads.filter(l => l.contactType === 'phone').length,
+      whatsapp: leads.filter(l => l.contactType === 'whatsapp').length,
+      email_unverified: leads.filter(l => l.contactType === 'email_unverified').length,
+      website: leads.filter(l => l.contactType === 'website').length
+    }
+  });
+  
+  res.end();
+});
+
+// Get available cities
+app.get('/api/cities', (req, res) => {
+  res.json({ cities: CRAIGSLIST_CITIES });
 });
 
 // Health check
 app.get('/api/health', (req, res) => {
-  res.json({
+  res.json({ 
     status: 'ok',
     apis: {
+      brightdata: !!BRIGHTDATA_API_KEY,
       hunter: !!HUNTER_API_KEY,
-      apollo: !!APOLLO_API_KEY,
-      apify: !!APIFY_API_KEY,
       gemini: !!GEMINI_API_KEY
     }
   });
 });
 
-// Export to Excel
-app.get('/api/export', (req, res) => {
-  const { verified } = req.query;
-  let leads = allLeads;
-
-  if (verified === 'true') {
-    leads = leads.filter(l => l.verified);
-  }
-
-  const ws = XLSX.utils.json_to_sheet(leads.map(l => ({
-    Name: l.name,
-    Email: l.email,
-    Phone: l.phone,
-    Company: l.company,
-    Title: l.title,
-    Source: l.source,
-    Intent: l.intent,
-    Verified: l.verified ? 'Yes' : 'No',
-    URL: l.url
-  })));
-
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, 'Leads');
-
-  const buffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
-
-  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-  res.setHeader('Content-Disposition', 'attachment; filename=leads.xlsx');
-  res.send(buffer);
-});
-
-// Start server
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`🚀 LeadGen Pro v2 running on port ${PORT}`);
+  console.log(`🔑 APIs: Bright Data ✅ | Hunter ✅ | Gemini ✅`);
 });
-
-module.exports = app;

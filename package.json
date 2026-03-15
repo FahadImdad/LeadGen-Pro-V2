@@ -2,10 +2,10 @@
   "name": "leadgen-pro-v2",
   "version": "2.0.0",
   "description": "Intent-Based Lead Generation with Verified Emails",
-  "main": "server-v2.js",
+  "main": "server.js",
   "scripts": {
-    "start": "node server-v2.js",
-    "dev": "node server-v2.js"
+    "start": "node server.js",
+    "dev": "node server.js"
   },
   "keywords": [
     "leads",
