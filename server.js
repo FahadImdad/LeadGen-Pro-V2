@@ -222,16 +222,23 @@ function getContactType(priority) {
 }
 
 // Scrape Reddit for freelance GIGS (not job postings)
-async function scrapeReddit(keyword, sendEvent) {
+async function scrapeReddit(keyword, sendEvent, timeFilterDays = 7) {
   const results = [];
   const axios = require('axios');
   
-  // Subreddits with freelance gigs
+  // Calculate cutoff time
+  const cutoffTime = Date.now() - (timeFilterDays * 24 * 60 * 60 * 1000);
+  sendEvent('log', { level: 'info', message: `⏰ Filtering posts from last ${timeFilterDays} day(s)` });
+  
+  // Subreddits with freelance gigs - expanded list
   const subreddits = [
-    { name: 'slavelabour', type: 'task', searchType: 'new' },  // Best source - [TASK] posts
+    { name: 'slavelabour', type: 'task', searchType: 'new' },
     { name: 'forhire', type: 'gig', searchType: 'search' },
     { name: 'Jobs4Bitcoins', type: 'task', searchType: 'new' },
-    { name: 'freelance_forhire', type: 'gig', searchType: 'new' }
+    { name: 'freelance_forhire', type: 'gig', searchType: 'new' },
+    { name: 'hiring', type: 'gig', searchType: 'search' },
+    { name: 'DesignJobs', type: 'gig', searchType: 'new' },
+    { name: 'gameDevJobs', type: 'gig', searchType: 'new' }
   ];
   
   for (const sub of subreddits) {
@@ -311,18 +318,24 @@ async function scrapeReddit(keyword, sendEvent) {
           isValidGig = isGig && !isJob && !isForHire;
         }
         
-        // Must match keyword (for search results it already does, but check for /new)
+        // Must match keyword (skip check if keyword is empty - show all)
         const matchesKeyword = 
+          !keyword || 
+          keyword.trim() === '' ||
           sub.searchType === 'search' || 
           titleLower.includes(keyword.toLowerCase()) ||
           bodyLower.includes(keyword.toLowerCase());
         
-        if (isValidGig && matchesKeyword) {
+        // Check time filter
+        const postTime = p.created_utc * 1000;
+        const isRecent = postTime >= cutoffTime;
+        
+        if (isValidGig && matchesKeyword && isRecent) {
           results.push({
             title: p.title,
             body: p.selftext || '',
             url: `https://reddit.com${p.permalink}`,
-            postedDate: new Date(p.created_utc * 1000).toISOString(),
+            postedDate: new Date(postTime).toISOString(),
             source: `reddit/r/${sub.name}`,
             author: p.author
           });
@@ -361,7 +374,7 @@ app.post('/api/search', async (req, res) => {
     sendEvent('log', { level: 'info', message: `🔍 Starting Reddit search for "${keyword}"...` });
     sendEvent('status', { message: `Searching Reddit...` });
     
-    const redditPosts = await scrapeReddit(keyword, sendEvent);
+    const redditPosts = await scrapeReddit(keyword, sendEvent, timeFilter);
     
     for (const post of redditPosts) {
       if (leads.length >= maxResults) break;
