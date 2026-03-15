@@ -274,7 +274,7 @@ async function scrapeReddit(keyword, sendEvent) {
           bodyLower.includes('pay you') ||
           bodyLower.includes('willing to pay');
         
-        // Exclude JOB postings (employment, not freelance)
+        // Exclude JOB postings (employment, not freelance gigs)
         const isJob = 
           titleLower.includes('position') ||
           titleLower.includes('salary') ||
@@ -288,10 +288,29 @@ async function scrapeReddit(keyword, sendEvent) {
           titleLower.includes('mid-level') ||
           titleLower.includes('years experience') ||
           titleLower.includes('yr experience') ||
+          titleLower.includes('/yr') ||
+          titleLower.includes('per year') ||
+          titleLower.includes('annually') ||
+          titleLower.includes('contract') ||
+          titleLower.includes('contractor') ||
+          titleLower.includes('w2') ||
+          titleLower.includes('w-2') ||
+          titleLower.includes('c2c') ||
+          titleLower.includes('hiring for') ||
+          titleLower.includes('is hiring') ||
+          titleLower.includes('we are hiring') ||
+          titleLower.includes('company is hiring') ||
+          titleLower.includes('onsite') ||
+          titleLower.includes('on-site') ||
+          titleLower.includes('hybrid') ||
           bodyLower.includes('salary') ||
           bodyLower.includes('benefits') ||
           bodyLower.includes('pto') ||
-          bodyLower.includes('401k');
+          bodyLower.includes('401k') ||
+          bodyLower.includes('health insurance') ||
+          bodyLower.includes('annual') ||
+          bodyLower.includes('/yr') ||
+          bodyLower.includes('per year');
         
         // Exclude [For Hire] posts (people offering services)
         const isForHire = 
