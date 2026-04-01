@@ -1010,97 +1010,44 @@ app.post('/api/amazon', async (req, res) => {
         saveLog(jobId, 'brightdata', `🌐 Connecting to Scraping Browser for Amazon...`);
         amazonBrowser = await puppeteer.connect({ browserWSEndpoint: BROWSER_WS });
 
-        while (keepGoing && page_num <= maxPages) {
-          const url = buildAmazonUrl(dateFrom, dateTo, page_num);
-          saveLog(jobId, 'info', `📄 Scraping Amazon page ${page_num}...`);
-
-          let pageBooks = [];
-
-          // Reconnect browser if dropped
+        // Scrape 3 Amazon pages in parallel per iteration
+        async function scrapeOnePage(pageNum) {
+          const pgUrl = buildAmazonUrl(dateFrom, dateTo, pageNum);
           if (!amazonBrowser || !amazonBrowser.isConnected()) {
-            saveLog(jobId, 'brightdata', `🔄 Reconnecting browser...`);
-            try {
-              if (amazonBrowser) await amazonBrowser.close().catch(() => {});
-              amazonBrowser = await puppeteer.connect({ browserWSEndpoint: BROWSER_WS });
-            } catch (connErr) {
-              saveLog(jobId, 'error', `❌ Reconnect failed: ${connErr.message}`);
-              break;
-            }
+            try { if (amazonBrowser) await amazonBrowser.close().catch(()=>{}); amazonBrowser = await puppeteer.connect({ browserWSEndpoint: BROWSER_WS }); }
+            catch(e) { return []; }
           }
-
-          const amzPage = await amazonBrowser.newPage();
-          amzPage.setDefaultNavigationTimeout(90000);
-
+          const pg = await amazonBrowser.newPage();
+          pg.setDefaultNavigationTimeout(90000);
           try {
-            await amzPage.goto(url, { waitUntil: 'domcontentloaded', timeout: 90000 });
-
-            // Wait for results to appear
-            await amzPage.waitForSelector('[data-component-type="s-search-result"]', { timeout: 20000 }).catch(() => {});
-
-            // Small delay to let JS populate ASIN attributes (they start empty)
+            await pg.goto(pgUrl, { waitUntil: 'domcontentloaded', timeout: 90000 });
+            await pg.waitForSelector('[data-component-type="s-search-result"]', { timeout: 20000 }).catch(()=>{});
             await new Promise(r => setTimeout(r, 2500));
+            const books = await pg.$$eval('[data-component-type="s-search-result"]', items => items.map(item => {
+              const asin = item.getAttribute('data-asin')||''; if(!asin||asin.length<8) return null;
+              const titleEl = item.querySelector('h2 a span')||item.querySelector('h2 span')||item.querySelector('.a-size-medium')||item.querySelector('.a-size-base-plus');
+              const title = titleEl ? titleEl.textContent.trim() : ''; if(!title||title.length<3) return null;
+              const authorEl = item.querySelector('.a-row .a-size-base+ .a-size-base')||item.querySelector('[class*="author"] .a-link-normal')||item.querySelector('.a-row a.a-link-normal');
+              const author = authorEl ? authorEl.textContent.trim() : '';
+              const dateEl = item.querySelector('.a-color-secondary .a-size-base')||item.querySelector('[class*="publication"]');
+              return { asin, title, author: author||'Unknown', publishDate: dateEl ? dateEl.textContent.trim() : '' };
+            }).filter(b => b&&b.asin&&b.title)).catch(()=>[]);
+            await pg.close(); return books;
+          } catch(e) { await pg.close().catch(()=>{}); return []; }
+        }
 
-            pageBooks = await amzPage.$$eval('[data-component-type="s-search-result"]', (items) => {
-              return items.map(item => {
-                const asin = item.getAttribute('data-asin') || '';
-                if (!asin) return null;
-                const titleEl = item.querySelector('h2 a span') ||
-                                item.querySelector('h2 span') ||
-                                item.querySelector('.a-size-medium') ||
-                                item.querySelector('.a-size-base-plus');
-                const title = titleEl ? titleEl.textContent.trim() : '';
-                if (!title || title.length < 3) return null;
-                const authorEl = item.querySelector('.a-row .a-size-base+ .a-size-base') ||
-                                 item.querySelector('[class*="author"] .a-link-normal') ||
-                                 item.querySelector('.a-row a.a-link-normal');
-                const author = authorEl ? authorEl.textContent.trim() : '';
-                const dateEl = item.querySelector('.a-color-secondary .a-size-base') ||
-                               item.querySelector('[class*="publication"]');
-                const publishDate = dateEl ? dateEl.textContent.trim() : '';
-                return { asin, title, author: author || 'Unknown', publishDate };
-              }).filter(b => b && b.asin && b.asin.length >= 8 && b.title);
-            }).catch(() => []);
-
-            const resultCount = pageBooks.length;
-            saveLog(jobId, 'info', `🔍 Found ${resultCount} results on page ${page_num}`);
-
-            await amzPage.close();
-
-          } catch (pageError) {
-            await amzPage.close().catch(() => {});
-            saveLog(jobId, 'error', `❌ Page ${page_num} error: ${pageError.message}`);
-            // On network error, try reconnecting before giving up
-            if (pageError.message.includes('network') || pageError.message.includes('disconnect')) {
-              saveLog(jobId, 'brightdata', `🔄 Network error — reconnecting...`);
-              try {
-                await amazonBrowser.close().catch(() => {});
-                amazonBrowser = await puppeteer.connect({ browserWSEndpoint: BROWSER_WS });
-                saveLog(jobId, 'success', `✅ Reconnected — retrying page ${page_num}`);
-                continue; // retry same page
-              } catch (e) {
-                saveLog(jobId, 'error', `❌ Reconnect failed: ${e.message}`);
-                break;
-              }
-            }
-            consecutiveEmpty++;
-            if (consecutiveEmpty >= 3) break;
-            page_num++;
-            continue;
-          }
-
-          saveLog(jobId, pageBooks.length > 0 ? 'success' : 'warning', `📚 Page ${page_num}: ${pageBooks.length} books found`);
-
-          if (pageBooks.length === 0) {
-            consecutiveEmpty++;
-            if (consecutiveEmpty >= 2) break;
-            page_num++;
-            continue;
-          }
+        while (keepGoing && page_num <= maxPages) {
+          const pageBatch = [page_num, page_num+1, page_num+2].filter(p => p <= maxPages);
+          saveLog(jobId, 'info', `📄 Scraping Amazon pages ${pageBatch.join(',')} in parallel...`);
+          const batchResults = await Promise.all(pageBatch.map(p => scrapeOnePage(p)));
+          page_num += 3;
+          const pageBooks = batchResults.flat();
+          saveLog(jobId, 'info', `📚 Got ${pageBooks.length} books from ${pageBatch.length} pages`);
+          if (pageBooks.length === 0) { consecutiveEmpty++; if(consecutiveEmpty>=2) break; continue; }
           consecutiveEmpty = 0;
-          page_num++;
 
           // Concurrency pool — always keep CONCURRENCY slots busy
-          const CONCURRENCY = 20;
+          const CONCURRENCY = 30;
           saveLog(jobId, 'info', `⚡ Processing ${pageBooks.length} authors with ${CONCURRENCY} concurrent workers...`);
 
           // Filter out already-seen ASINs upfront
