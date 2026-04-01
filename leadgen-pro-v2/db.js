@@ -61,6 +61,14 @@ _db.exec(`
   );
 
   CREATE UNIQUE INDEX IF NOT EXISTS idx_intent_url ON intent_leads(url);
+
+  CREATE TABLE IF NOT EXISTS job_logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    job_id INTEGER NOT NULL,
+    level TEXT,
+    message TEXT,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+  );
 `);
 
 // Wrap node-sqlite3-wasm in a better-sqlite3-compatible interface

@@ -52,6 +52,11 @@ const CRAIGSLIST_CITIES = [
 // SHARED UTILITIES
 // ============================================================
 
+// Save a log entry to the job_logs table
+function saveLog(jobId, level, message) {
+  db.prepare('INSERT INTO job_logs (job_id, level, message) VALUES (?, ?, ?)').run(jobId, level, message);
+}
+
 // Scrape URL using Bright Data Web Unlocker (for simple requests like Reddit JSON)
 async function scrapeWithBrightData(url) {
   try {
@@ -669,10 +674,22 @@ async function findAuthorContact(authorName, bookTitle, sendEvent) {
 // API ENDPOINTS
 // ============================================================
 
+// GET /api/ping — keepalive / wake-up
+app.get('/api/ping', (req, res) => res.json({ ok: true, time: Date.now() }));
+
 // GET /api/jobs — list all scrape jobs
 app.get('/api/jobs', (req, res) => {
   const jobs = db.prepare('SELECT * FROM scrape_jobs ORDER BY created_at DESC').all();
   res.json(jobs);
+});
+
+// GET /api/jobs/:jobId/logs — poll for new logs since a given id
+app.get('/api/jobs/:jobId/logs', (req, res) => {
+  const { jobId } = req.params;
+  const since = parseInt(req.query.since || '0');
+  const logs = db.prepare('SELECT * FROM job_logs WHERE job_id = ? AND id > ? ORDER BY id ASC LIMIT 100').all(jobId, since);
+  const job = db.prepare('SELECT * FROM scrape_jobs WHERE id = ?').get(jobId);
+  res.json({ logs, job });
 });
 
 // DELETE /api/jobs/:jobId — delete a job and its leads
@@ -682,6 +699,7 @@ app.delete('/api/jobs/:jobId', (req, res) => {
   if (!job) return res.status(404).json({ error: 'Job not found' });
   db.prepare('DELETE FROM amazon_leads WHERE job_id = ?').run(jobId);
   db.prepare('DELETE FROM intent_leads WHERE job_id = ?').run(jobId);
+  db.prepare('DELETE FROM job_logs WHERE job_id = ?').run(jobId);
   db.prepare('DELETE FROM scrape_jobs WHERE id = ?').run(jobId);
   res.json({ success: true, deleted: jobId });
 });
@@ -759,7 +777,7 @@ app.get('/api/debug/craigslist', async (req, res) => {
 });
 
 // ============================================================
-// POST /api/amazon — Amazon Author Lead Gen
+// POST /api/amazon — Amazon Author Lead Gen (background job)
 // ============================================================
 app.post('/api/amazon', async (req, res) => {
   const { dateFrom, dateTo, targetLeads = 1000, keyword } = req.body;
@@ -770,15 +788,6 @@ app.post('/api/amazon', async (req, res) => {
 
   console.log(`[${new Date().toISOString()}] Amazon search: dateFrom=${dateFrom}, dateTo=${dateTo}, targetLeads=${targetLeads}`);
 
-  // Set up SSE
-  res.setHeader('Content-Type', 'text/event-stream');
-  res.setHeader('Cache-Control', 'no-cache');
-  res.setHeader('Connection', 'keep-alive');
-
-  const sendEvent = (type, data) => {
-    res.write(`data: ${JSON.stringify({ type, ...data })}\n\n`);
-  };
-
   // Create scrape job in DB
   const jobResult = db.prepare(
     `INSERT INTO scrape_jobs (framework, date_from, date_to, keyword, target_leads, status)
@@ -786,231 +795,226 @@ app.post('/api/amazon', async (req, res) => {
   ).run(dateFrom, dateTo, keyword || null, targetLeads);
   const jobId = jobResult.lastInsertRowid;
 
-  // Keepalive ping every 20s to prevent Render from closing idle SSE connection
-  const keepalive = setInterval(() => {
-    res.write(': keepalive\n\n');
-  }, 20000);
+  // Return job ID immediately so frontend can start polling
+  res.setHeader('Content-Type', 'application/json');
+  res.json({ jobId });
 
-  sendEvent('log', { level: 'info', message: `🚀 Starting Amazon Author Lead Gen (job #${jobId}, target: ${targetLeads} verified leads)...` });
-  sendEvent('status', { message: 'Scraping Amazon new releases...', jobId });
-
-  let verifiedCount = 0;
-  let totalCount = 0;
-
-  // Step 1: Stream Amazon books page by page using Scraping Browser
-  // (Web Unlocker returns JS-shell with empty data-asin — need real JS execution)
-  let page_num = 1;
-  const maxPages = 50;
-  let keepGoing = true;
-  let consecutiveEmpty = 0;
-  let amazonBrowser = null;
-
-  try {
-    sendEvent('log', { level: 'brightdata', message: `🌐 Connecting to Scraping Browser for Amazon...` });
-    amazonBrowser = await puppeteer.connect({ browserWSEndpoint: BROWSER_WS });
-
-    while (keepGoing && page_num <= maxPages) {
-      const url = buildAmazonUrl(dateFrom, dateTo, page_num);
-      sendEvent('log', { level: 'info', message: `📄 Scraping Amazon page ${page_num}...` });
-
-      let pageBooks = [];
-
-      // Reconnect browser if dropped
-      if (!amazonBrowser || !amazonBrowser.isConnected()) {
-        sendEvent('log', { level: 'brightdata', message: `🔄 Reconnecting browser...` });
-        try {
-          if (amazonBrowser) await amazonBrowser.close().catch(() => {});
-          amazonBrowser = await puppeteer.connect({ browserWSEndpoint: BROWSER_WS });
-        } catch (connErr) {
-          sendEvent('log', { level: 'error', message: `❌ Reconnect failed: ${connErr.message}` });
-          break;
-        }
+  // Run scraping in background
+  setImmediate(async () => {
+    // Local sendEvent writes logs to DB instead of SSE
+    const sendEvent = (type, data) => {
+      if (type === 'log') {
+        saveLog(jobId, data.level || 'info', data.message || '');
       }
+      // progress/lead/complete are handled via DB updates — no action needed
+    };
 
-      const amzPage = await amazonBrowser.newPage();
-      amzPage.setDefaultNavigationTimeout(90000);
+    let verifiedCount = 0;
+    let totalCount = 0;
+
+    try {
+      saveLog(jobId, 'info', `🚀 Starting Amazon Author Lead Gen (job #${jobId}, target: ${targetLeads} verified leads)...`);
+
+      let page_num = 1;
+      const maxPages = 50;
+      let keepGoing = true;
+      let consecutiveEmpty = 0;
+      let amazonBrowser = null;
 
       try {
-        await amzPage.goto(url, { waitUntil: 'domcontentloaded', timeout: 90000 });
+        saveLog(jobId, 'brightdata', `🌐 Connecting to Scraping Browser for Amazon...`);
+        amazonBrowser = await puppeteer.connect({ browserWSEndpoint: BROWSER_WS });
 
-        // Wait for results to appear
-        await amzPage.waitForSelector('[data-component-type="s-search-result"]', { timeout: 20000 }).catch(() => {});
+        while (keepGoing && page_num <= maxPages) {
+          const url = buildAmazonUrl(dateFrom, dateTo, page_num);
+          saveLog(jobId, 'info', `📄 Scraping Amazon page ${page_num}...`);
 
-        // Small delay to let JS populate ASIN attributes (they start empty)
-        await new Promise(r => setTimeout(r, 2500));
+          let pageBooks = [];
 
-        pageBooks = await amzPage.$$eval('[data-component-type="s-search-result"]', (items) => {
-          return items.map(item => {
-            const asin = item.getAttribute('data-asin') || '';
-            if (!asin) return null;
-            const titleEl = item.querySelector('h2 a span') ||
-                            item.querySelector('h2 span') ||
-                            item.querySelector('.a-size-medium') ||
-                            item.querySelector('.a-size-base-plus');
-            const title = titleEl ? titleEl.textContent.trim() : '';
-            if (!title || title.length < 3) return null;
-            const authorEl = item.querySelector('.a-row .a-size-base+ .a-size-base') ||
-                             item.querySelector('[class*="author"] .a-link-normal') ||
-                             item.querySelector('.a-row a.a-link-normal');
-            const author = authorEl ? authorEl.textContent.trim() : '';
-            const dateEl = item.querySelector('.a-color-secondary .a-size-base') ||
-                           item.querySelector('[class*="publication"]');
-            const publishDate = dateEl ? dateEl.textContent.trim() : '';
-            return { asin, title, author: author || 'Unknown', publishDate };
-          }).filter(b => b && b.asin && b.asin.length >= 8 && b.title);
-        }).catch(() => []);
+          // Reconnect browser if dropped
+          if (!amazonBrowser || !amazonBrowser.isConnected()) {
+            saveLog(jobId, 'brightdata', `🔄 Reconnecting browser...`);
+            try {
+              if (amazonBrowser) await amazonBrowser.close().catch(() => {});
+              amazonBrowser = await puppeteer.connect({ browserWSEndpoint: BROWSER_WS });
+            } catch (connErr) {
+              saveLog(jobId, 'error', `❌ Reconnect failed: ${connErr.message}`);
+              break;
+            }
+          }
 
-        const resultCount = pageBooks.length;
-        sendEvent('log', { level: 'info', message: `🔍 Found ${resultCount} results on page ${page_num}` });
+          const amzPage = await amazonBrowser.newPage();
+          amzPage.setDefaultNavigationTimeout(90000);
 
-        await amzPage.close();
-
-      } catch (pageError) {
-        await amzPage.close().catch(() => {});
-        sendEvent('log', { level: 'error', message: `❌ Page ${page_num} error: ${pageError.message}` });
-        // On network error, try reconnecting before giving up
-        if (pageError.message.includes('network') || pageError.message.includes('disconnect')) {
-          sendEvent('log', { level: 'brightdata', message: `🔄 Network error — reconnecting...` });
           try {
-            await amazonBrowser.close().catch(() => {});
-            amazonBrowser = await puppeteer.connect({ browserWSEndpoint: BROWSER_WS });
-            sendEvent('log', { level: 'success', message: `✅ Reconnected — retrying page ${page_num}` });
-            continue; // retry same page
-          } catch (e) {
-            sendEvent('log', { level: 'error', message: `❌ Reconnect failed: ${e.message}` });
-            break;
+            await amzPage.goto(url, { waitUntil: 'domcontentloaded', timeout: 90000 });
+
+            // Wait for results to appear
+            await amzPage.waitForSelector('[data-component-type="s-search-result"]', { timeout: 20000 }).catch(() => {});
+
+            // Small delay to let JS populate ASIN attributes (they start empty)
+            await new Promise(r => setTimeout(r, 2500));
+
+            pageBooks = await amzPage.$$eval('[data-component-type="s-search-result"]', (items) => {
+              return items.map(item => {
+                const asin = item.getAttribute('data-asin') || '';
+                if (!asin) return null;
+                const titleEl = item.querySelector('h2 a span') ||
+                                item.querySelector('h2 span') ||
+                                item.querySelector('.a-size-medium') ||
+                                item.querySelector('.a-size-base-plus');
+                const title = titleEl ? titleEl.textContent.trim() : '';
+                if (!title || title.length < 3) return null;
+                const authorEl = item.querySelector('.a-row .a-size-base+ .a-size-base') ||
+                                 item.querySelector('[class*="author"] .a-link-normal') ||
+                                 item.querySelector('.a-row a.a-link-normal');
+                const author = authorEl ? authorEl.textContent.trim() : '';
+                const dateEl = item.querySelector('.a-color-secondary .a-size-base') ||
+                               item.querySelector('[class*="publication"]');
+                const publishDate = dateEl ? dateEl.textContent.trim() : '';
+                return { asin, title, author: author || 'Unknown', publishDate };
+              }).filter(b => b && b.asin && b.asin.length >= 8 && b.title);
+            }).catch(() => []);
+
+            const resultCount = pageBooks.length;
+            saveLog(jobId, 'info', `🔍 Found ${resultCount} results on page ${page_num}`);
+
+            await amzPage.close();
+
+          } catch (pageError) {
+            await amzPage.close().catch(() => {});
+            saveLog(jobId, 'error', `❌ Page ${page_num} error: ${pageError.message}`);
+            // On network error, try reconnecting before giving up
+            if (pageError.message.includes('network') || pageError.message.includes('disconnect')) {
+              saveLog(jobId, 'brightdata', `🔄 Network error — reconnecting...`);
+              try {
+                await amazonBrowser.close().catch(() => {});
+                amazonBrowser = await puppeteer.connect({ browserWSEndpoint: BROWSER_WS });
+                saveLog(jobId, 'success', `✅ Reconnected — retrying page ${page_num}`);
+                continue; // retry same page
+              } catch (e) {
+                saveLog(jobId, 'error', `❌ Reconnect failed: ${e.message}`);
+                break;
+              }
+            }
+            consecutiveEmpty++;
+            if (consecutiveEmpty >= 3) break;
+            page_num++;
+            continue;
           }
-        }
-        consecutiveEmpty++;
-        if (consecutiveEmpty >= 3) break;
-        page_num++;
-        continue;
-      }
 
-      sendEvent('log', { level: pageBooks.length > 0 ? 'success' : 'warning', message: `📚 Page ${page_num}: ${pageBooks.length} books found` });
+          saveLog(jobId, pageBooks.length > 0 ? 'success' : 'warning', `📚 Page ${page_num}: ${pageBooks.length} books found`);
 
-      if (pageBooks.length === 0) {
-        consecutiveEmpty++;
-        if (consecutiveEmpty >= 2) break;
-        page_num++;
-        continue;
-      }
-      consecutiveEmpty = 0;
-      page_num++;
-
-      // Step 2: Process each book
-      for (const book of pageBooks) {
-        if (verifiedCount >= targetLeads) { keepGoing = false; break; }
-
-        const title = book.title || 'Unknown Title';
-        const author = book.author || 'Unknown Author';
-        const asin = book.asin;
-        const amazonUrl = `https://www.amazon.com/dp/${asin}`;
-
-        // ASIN dedup — skip entirely if already in DB
-        const asinExists = db.prepare('SELECT id FROM amazon_leads WHERE asin = ?').get(asin);
-        if (asinExists) {
-          sendEvent('log', { level: 'info', message: `⏭️ SKIP (seen ASIN): ${asin}` });
-          continue;
-        }
-
-        sendEvent('log', { level: 'info', message: `📚 Processing: "${title}" by ${author}` });
-        totalCount++;
-
-        // Find author contact
-        const { email, website } = await findAuthorContact(author, title, sendEvent);
-
-        // Verify email
-        let emailVerified = false;
-        let emailStatus = null;
-        if (email) {
-          sendEvent('log', { level: 'hunter', message: `📧 HUNTER.IO: Verifying ${email}...` });
-          const verification = await verifyEmail(email);
-          emailVerified = verification.valid;
-          emailStatus = verification.status;
-          sendEvent('log', { level: emailVerified ? 'success' : 'warning', message: `${emailVerified ? '✅' : '⚠️'} HUNTER.IO: ${emailStatus || 'unverified'}` });
-        }
-
-        // Website check
-        const hasRealWebsite = website ? isRealAuthorWebsite(website) : false;
-
-        // Check for cross-job email duplicate
-        let isDuplicate = 0;
-        if (email && emailVerified) {
-          const emailExists = db.prepare('SELECT id FROM amazon_leads WHERE email = ? AND job_id != ?').get(email, jobId);
-          if (emailExists) {
-            isDuplicate = 1;
-            sendEvent('log', { level: 'warning', message: `♻️ DUPLICATE email across jobs: ${email} — saving but not counting` });
+          if (pageBooks.length === 0) {
+            consecutiveEmpty++;
+            if (consecutiveEmpty >= 2) break;
+            page_num++;
+            continue;
           }
+          consecutiveEmpty = 0;
+          page_num++;
+
+          // Process each book
+          for (const book of pageBooks) {
+            if (verifiedCount >= targetLeads) { keepGoing = false; break; }
+
+            const title = book.title || 'Unknown Title';
+            const author = book.author || 'Unknown Author';
+            const asin = book.asin;
+            const amazonUrl = `https://www.amazon.com/dp/${asin}`;
+
+            // ASIN dedup — skip entirely if already in DB
+            const asinExists = db.prepare('SELECT id FROM amazon_leads WHERE asin = ?').get(asin);
+            if (asinExists) {
+              saveLog(jobId, 'info', `⏭️ SKIP (seen ASIN): ${asin}`);
+              continue;
+            }
+
+            saveLog(jobId, 'info', `📚 Processing: "${title}" by ${author}`);
+            totalCount++;
+
+            // Find author contact
+            const { email, website } = await findAuthorContact(author, title, sendEvent);
+
+            // Verify email
+            let emailVerified = false;
+            let emailStatus = null;
+            if (email) {
+              saveLog(jobId, 'hunter', `📧 HUNTER.IO: Verifying ${email}...`);
+              const verification = await verifyEmail(email);
+              emailVerified = verification.valid;
+              emailStatus = verification.status;
+              saveLog(jobId, emailVerified ? 'success' : 'warning', `${emailVerified ? '✅' : '⚠️'} HUNTER.IO: ${emailStatus || 'unverified'}`);
+            }
+
+            // Website check
+            const hasRealWebsite = website ? isRealAuthorWebsite(website) : false;
+
+            // Check for cross-job email duplicate
+            let isDuplicate = 0;
+            if (email && emailVerified) {
+              const emailExists = db.prepare('SELECT id FROM amazon_leads WHERE email = ? AND job_id != ?').get(email, jobId);
+              if (emailExists) {
+                isDuplicate = 1;
+                saveLog(jobId, 'warning', `♻️ DUPLICATE email across jobs: ${email} — saving but not counting`);
+              }
+            }
+
+            // Save to DB regardless
+            try {
+              db.prepare(
+                `INSERT INTO amazon_leads (job_id, author, book_title, publish_date, email, email_verified, email_status, website, amazon_url, asin, is_duplicate)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+              ).run(jobId, author, title, book.publishDate || null, email || null, emailVerified ? 1 : 0, emailStatus, hasRealWebsite ? website : null, amazonUrl, asin, isDuplicate);
+            } catch (dbErr) {
+              // UNIQUE constraint hit (race condition) — skip
+              saveLog(jobId, 'warning', `⚠️ DB insert skipped (dupe): ${asin}`);
+              continue;
+            }
+
+            // Only count if ALL 4 checks pass:
+            // 1. Email verified  2. Non-duplicate email  3. Real author website  4. ASIN not seen (already checked)
+            if (emailVerified && isDuplicate === 0 && hasRealWebsite) {
+              verifiedCount++;
+              db.prepare('UPDATE scrape_jobs SET verified_count = ?, total_count = ? WHERE id = ?').run(verifiedCount, totalCount, jobId);
+              saveLog(jobId, 'success', `✅ VERIFIED LEAD #${verifiedCount}: ${author} | ${email}`);
+            } else {
+              db.prepare('UPDATE scrape_jobs SET total_count = ? WHERE id = ?').run(totalCount, jobId);
+              const reason = !emailVerified ? 'no verified email' : isDuplicate ? 'duplicate email' : 'no real author website';
+              saveLog(jobId, 'info', `📝 Saved to DB (not counted — ${reason}): ${author}`);
+            }
+
+            await new Promise(r => setTimeout(r, 1000));
+          }
+
+          await new Promise(r => setTimeout(r, 1500));
         }
-
-        // Save to DB regardless
-        try {
-          db.prepare(
-            `INSERT INTO amazon_leads (job_id, author, book_title, publish_date, email, email_verified, email_status, website, amazon_url, asin, is_duplicate)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-          ).run(jobId, author, title, book.publishDate || null, email || null, emailVerified ? 1 : 0, emailStatus, hasRealWebsite ? website : null, amazonUrl, asin, isDuplicate);
-        } catch (dbErr) {
-          // UNIQUE constraint hit (race condition) — skip
-          sendEvent('log', { level: 'warning', message: `⚠️ DB insert skipped (dupe): ${asin}` });
-          continue;
-        }
-
-        // Only count and emit if ALL 4 checks pass:
-        // 1. Email verified  2. Non-duplicate email  3. Real author website  4. ASIN not seen (already checked)
-        if (emailVerified && isDuplicate === 0 && hasRealWebsite) {
-          verifiedCount++;
-          db.prepare('UPDATE scrape_jobs SET verified_count = ?, total_count = ? WHERE id = ?').run(verifiedCount, totalCount, jobId);
-
-          const lead = {
-            id: totalCount,
-            author,
-            bookTitle: title,
-            publishDate: book.publishDate || '',
-            email,
-            emailVerified: true,
-            emailStatus,
-            website,
-            amazonUrl,
-            asin,
-            scrapedAt: new Date().toISOString()
-          };
-
-          sendEvent('amazon_lead', { lead });
-          sendEvent('progress', { verified: verifiedCount, target: targetLeads });
-          sendEvent('log', { level: 'success', message: `✅ VERIFIED LEAD #${verifiedCount}: ${author} | ${email}` });
-        } else {
-          db.prepare('UPDATE scrape_jobs SET total_count = ? WHERE id = ?').run(totalCount, jobId);
-          const reason = !emailVerified ? 'no verified email' : isDuplicate ? 'duplicate email' : 'no real author website';
-          sendEvent('log', { level: 'info', message: `📝 Saved to DB (not counted — ${reason}): ${author}` });
-        }
-
-        await new Promise(r => setTimeout(r, 1000));
+      } catch (error) {
+        saveLog(jobId, 'error', `❌ Fatal error: ${error.message}`);
+        console.error('Amazon background error:', error);
+      } finally {
+        if (amazonBrowser) await amazonBrowser.close().catch(() => {});
       }
 
-      await new Promise(r => setTimeout(r, 1500));
+      // Mark job complete
+      db.prepare(
+        `UPDATE scrape_jobs SET status = 'complete', verified_count = ?, total_count = ?, completed_at = CURRENT_TIMESTAMP WHERE id = ?`
+      ).run(verifiedCount, totalCount, jobId);
+
+      saveLog(jobId, 'success', `\n🎯 AMAZON COMPLETE! Verified: ${verifiedCount} / ${targetLeads} | Total processed: ${totalCount}`);
+
+    } catch (fatalErr) {
+      console.error('Amazon background fatal:', fatalErr);
+      try {
+        db.prepare(`UPDATE scrape_jobs SET status = 'error', completed_at = CURRENT_TIMESTAMP WHERE id = ?`).run(jobId);
+        saveLog(jobId, 'error', `❌ Fatal background error: ${fatalErr.message}`);
+      } catch(e) {}
     }
-  } catch (error) {
-    sendEvent('log', { level: 'error', message: `❌ Fatal error: ${error.message}` });
-    console.error('Amazon endpoint error:', error);
-  } finally {
-    if (amazonBrowser) await amazonBrowser.close().catch(() => {});
-  }
-
-  // Mark job complete
-  db.prepare(
-    `UPDATE scrape_jobs SET status = 'complete', verified_count = ?, total_count = ?, completed_at = CURRENT_TIMESTAMP WHERE id = ?`
-  ).run(verifiedCount, totalCount, jobId);
-
-  clearInterval(keepalive);
-  sendEvent('log', { level: 'success', message: `\n🎯 AMAZON COMPLETE! Verified: ${verifiedCount} / ${targetLeads} | Total processed: ${totalCount}` });
-  sendEvent('complete', { jobId, verified: verifiedCount, total: totalCount, target: targetLeads });
-
-  res.end();
+  });
 });
 
 // ============================================================
-// POST /api/search — Intent Leads (Craigslist + Reddit)
+// POST /api/search — Intent Leads (Craigslist + Reddit, background job)
 // ============================================================
 app.post('/api/search', async (req, res) => {
   const { keyword, region, dateFrom, dateTo, targetLeads = 50, sourceFilter = 'all', budgetFilter = 0 } = req.body;
@@ -1021,20 +1025,6 @@ app.post('/api/search', async (req, res) => {
 
   console.log(`[${new Date().toISOString()}] Search: "${keyword}" | ${dateFrom} → ${dateTo} | target: ${targetLeads}`);
 
-  // Set up SSE
-  res.setHeader('Content-Type', 'text/event-stream');
-  res.setHeader('Cache-Control', 'no-cache');
-  res.setHeader('Connection', 'keep-alive');
-
-  const sendEvent = (type, data) => {
-    res.write(`data: ${JSON.stringify({ type, ...data })}\n\n`);
-  };
-
-  // Keepalive ping every 20s to prevent Render from closing idle SSE connection
-  const keepalive = setInterval(() => {
-    res.write(': keepalive\n\n');
-  }, 20000);
-
   // Create scrape job
   const jobResult = db.prepare(
     `INSERT INTO scrape_jobs (framework, date_from, date_to, keyword, target_leads, status)
@@ -1042,318 +1032,84 @@ app.post('/api/search', async (req, res) => {
   ).run(dateFrom, dateTo, keyword || null, targetLeads);
   const jobId = jobResult.lastInsertRowid;
 
-  sendEvent('status', { message: 'Starting search...', jobId });
+  // Return job ID immediately so frontend can start polling
+  res.setHeader('Content-Type', 'application/json');
+  res.json({ jobId });
 
-  let verifiedCount = 0;
-  let totalCount = 0;
-
-  let cities;
-  if (!region || region === 'all') {
-    cities = CRAIGSLIST_CITIES.slice(0, 50);
-  } else if (region.includes(',')) {
-    cities = region.split(',').map(r => r.trim()).filter(r => r);
-  } else {
-    cities = [region];
-  }
-
-  // ========== REDDIT FIRST ==========
-  if (sourceFilter === 'all' || sourceFilter === 'reddit') {
-    sendEvent('log', { level: 'info', message: `🔍 Starting Reddit search for "${keyword}"...` });
-    sendEvent('status', { message: `Searching Reddit...` });
-
-    const redditPosts = await scrapeReddit(keyword, sendEvent, dateFrom, dateTo);
-
-    for (const post of redditPosts) {
-      if (verifiedCount >= targetLeads) break;
-
-      // URL dedup — skip entirely if already in DB
-      const urlExists = db.prepare('SELECT id FROM intent_leads WHERE url = ?').get(post.url);
-      if (urlExists) {
-        sendEvent('log', { level: 'info', message: `⏭️ SKIP (seen URL): ${post.url.substring(0, 60)}` });
-        continue;
+  // Run scraping in background
+  setImmediate(async () => {
+    // Local sendEvent writes logs to DB
+    const sendEvent = (type, data) => {
+      if (type === 'log') {
+        saveLog(jobId, data.level || 'info', data.message || '');
       }
+    };
 
-      sendEvent('log', { level: 'ai', message: `🤖 AI: Analyzing "${post.title.substring(0, 50)}..."` });
+    let verifiedCount = 0;
+    let totalCount = 0;
 
-      const contacts = await extractContactsWithAI(post.body, post.title);
-      sendEvent('log', { level: 'ai', message: `🧠 AI Result: Email="${contacts.email || 'N/A'}", Budget="${contacts.budget || 'N/A'}"` });
-
-      if (budgetFilter > 0 && contacts.budget) {
-        const budgetNum = parseInt(contacts.budget.replace(/[^0-9]/g, ''));
-        if (budgetNum > 0 && budgetNum < budgetFilter) {
-          sendEvent('log', { level: 'reject', message: `❌ REJECTED: Budget $${budgetNum} < $${budgetFilter}` });
-          continue;
-        }
-      }
-
-      let emailVerified = false;
-      let emailStatus = null;
-      if (contacts.email) {
-        sendEvent('log', { level: 'hunter', message: `📧 HUNTER.IO: Verifying ${contacts.email}...` });
-        const verification = await verifyEmail(contacts.email);
-        emailVerified = verification.valid;
-        emailStatus = verification.status;
-        sendEvent('log', { level: emailVerified ? 'success' : 'warning', message: `${emailVerified ? '✅' : '⚠️'} HUNTER.IO: ${emailStatus || 'unverified'}` });
-      }
-
-      // Check cross-job email duplicate
-      let isDuplicate = 0;
-      if (contacts.email && emailVerified) {
-        const emailExists = db.prepare('SELECT id FROM intent_leads WHERE email = ? AND job_id != ?').get(contacts.email, jobId);
-        if (emailExists) {
-          isDuplicate = 1;
-          sendEvent('log', { level: 'warning', message: `♻️ DUPLICATE email across jobs: ${contacts.email}` });
-        }
-      }
-
-      totalCount++;
-
-      // Save to DB
-      try {
-        db.prepare(
-          `INSERT INTO intent_leads (job_id, name, title, description, email, email_verified, email_status, phone, whatsapp, budget, city, source, url, posted_date, is_duplicate)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-        ).run(
-          jobId,
-          contacts.name || post.author || 'Unknown',
-          post.title,
-          contacts.description || post.title.substring(0, 100),
-          contacts.email || null,
-          emailVerified ? 1 : 0,
-          emailStatus,
-          contacts.phone || null,
-          contacts.whatsapp || null,
-          contacts.budget || null,
-          'Remote',
-          post.source,
-          post.url,
-          post.postedDate,
-          isDuplicate
-        );
-      } catch (dbErr) {
-        sendEvent('log', { level: 'warning', message: `⚠️ DB insert skipped (dupe URL): ${post.url.substring(0, 60)}` });
-        continue;
-      }
-
-      db.prepare('UPDATE scrape_jobs SET total_count = ? WHERE id = ?').run(totalCount, jobId);
-
-      // Only emit and count if verified and non-duplicate
-      if (emailVerified && isDuplicate === 0) {
-        verifiedCount++;
-        db.prepare('UPDATE scrape_jobs SET verified_count = ? WHERE id = ?').run(verifiedCount, jobId);
-
-        const lead = {
-          id: totalCount,
-          name: contacts.name || post.author || 'Unknown',
-          title: post.title,
-          description: contacts.description || post.title.substring(0, 100),
-          email: contacts.email,
-          emailVerified: true,
-          emailStatus,
-          phone: contacts.phone || null,
-          whatsapp: contacts.whatsapp || null,
-          budget: contacts.budget || null,
-          city: 'Remote',
-          source: post.source,
-          url: post.url,
-          postedDate: post.postedDate,
-          scrapedAt: new Date().toISOString()
-        };
-
-        lead.contactPriority = getContactPriority(lead);
-        lead.contactType = getContactType(lead.contactPriority);
-
-        sendEvent('lead', { lead });
-        sendEvent('progress', { verified: verifiedCount, target: targetLeads });
-        sendEvent('log', { level: 'success', message: `✅ VERIFIED LEAD #${verifiedCount}: ${lead.name} | ${lead.email}` });
-      }
-
-      await new Promise(r => setTimeout(r, 500));
-    }
-  }
-
-  // ========== CRAIGSLIST ==========
-  if ((sourceFilter === 'all' || sourceFilter === 'craigslist') && verifiedCount < targetLeads) {
-    sendEvent('log', { level: 'info', message: `\n📍 Searching Craigslist (${cities.length} cities)...` });
-    sendEvent('status', { message: `Searching Craigslist...` });
-
-    // Reuse a single browser for all CL work to avoid connection exhaustion
-    let clBrowser = null;
     try {
-      sendEvent('log', { level: 'brightdata', message: `🌐 Opening shared Craigslist browser...` });
-      clBrowser = await puppeteer.connect({ browserWSEndpoint: BROWSER_WS });
-    } catch (e) {
-      sendEvent('log', { level: 'error', message: `❌ Could not connect browser: ${e.message}` });
-    }
+      saveLog(jobId, 'info', `🚀 Starting Intent Lead search (job #${jobId})...`);
 
-    // Helper: fetch a single CL post using shared browser (with reconnect)
-    async function fetchCLPost(url) {
-      // Reconnect if dropped
-      if (!clBrowser || !clBrowser.isConnected()) {
-        try {
-          if (clBrowser) await clBrowser.close().catch(() => {});
-          clBrowser = await puppeteer.connect({ browserWSEndpoint: BROWSER_WS });
-          sendEvent('log', { level: 'brightdata', message: `🔄 CL browser reconnected` });
-        } catch (e) {
-          sendEvent('log', { level: 'error', message: `❌ CL reconnect failed: ${e.message}` });
-          return null;
-        }
+      let cities;
+      if (!region || region === 'all') {
+        cities = CRAIGSLIST_CITIES.slice(0, 50);
+      } else if (region.includes(',')) {
+        cities = region.split(',').map(r => r.trim()).filter(r => r);
+      } else {
+        cities = [region];
       }
-      const page = await clBrowser.newPage();
-      page.setDefaultNavigationTimeout(30000);
-      try {
-        await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
-        await new Promise(r => setTimeout(r, 1000));
-        const html = await page.content();
-        await page.close();
-        return html;
-      } catch (e) {
-        await page.close().catch(() => {});
-        return null;
-      }
-    }
 
-    // Helper: scrape CL city listings using shared browser
-    async function scrapeCLCity(city, kw) {
-      const results = [];
-      if (!clBrowser) return results;
-      const page = await clBrowser.newPage();
-      page.setDefaultNavigationTimeout(45000);
-      let apiItems = [];
-      page.on('response', async (response) => {
-        const u = response.url();
-        if (u.includes('sapi.craigslist.org') && u.includes('postings/search/full')) {
-          try {
-            const json = await response.json();
-            const items = json?.data?.items || [];
-            if (items.length > 0 && Array.isArray(items[0]) && items[0].length >= 10) {
-              apiItems = items;
-            }
-          } catch(e) {}
-        }
-      });
-      const searchUrl = kw
-        ? `https://${city}.craigslist.org/search/ggg?query=${encodeURIComponent(kw)}`
-        : `https://${city}.craigslist.org/search/ggg`;
-      try {
-        await page.goto(searchUrl, { waitUntil: 'networkidle2', timeout: 45000 });
-        for (let i = 0; i < 10 && apiItems.length === 0; i++) {
-          await new Promise(r => setTimeout(r, 500));
-        }
-        for (const item of apiItems) {
-          if (Array.isArray(item) && item.length >= 10) {
-            const postingId = item[0];
-            const title = item[item.length - 1];
-            const slugArr = item.find(el => Array.isArray(el) && el[0] === 6);
-            const urlSlug = slugArr ? slugArr[1] : 'gig';
-            if (title && typeof title === 'string' && title.length > 5) {
-              results.push({
-                url: `https://${city}.craigslist.org/ggg/d/${urlSlug}/${postingId}.html`,
-                title, city
-              });
-            }
-          }
-        }
-        sendEvent('log', { level: 'success', message: `✅ ${city}: ${results.length} gigs` });
-      } catch (e) {
-        sendEvent('log', { level: 'error', message: `❌ ${city}: ${e.message}` });
-      } finally {
-        await page.close().catch(() => {});
-      }
-      return results;
-    }
+      // ========== REDDIT FIRST ==========
+      if (sourceFilter === 'all' || sourceFilter === 'reddit') {
+        saveLog(jobId, 'info', `🔍 Starting Reddit search for "${keyword}"...`);
 
-    for (const city of cities) {
-      if (verifiedCount >= targetLeads) break;
+        const redditPosts = await scrapeReddit(keyword, sendEvent, dateFrom, dateTo);
 
-      try {
-        const listings = await scrapeCLCity(city, keyword);
-        sendEvent('log', { level: 'info', message: `📊 ${city}: ${listings.length} listings` });
-
-        for (const listing of listings.slice(0, 20)) {
+        for (const post of redditPosts) {
           if (verifiedCount >= targetLeads) break;
 
-          // URL dedup
-          const urlExists = db.prepare('SELECT id FROM intent_leads WHERE url = ?').get(listing.url);
+          // URL dedup — skip entirely if already in DB
+          const urlExists = db.prepare('SELECT id FROM intent_leads WHERE url = ?').get(post.url);
           if (urlExists) {
-            sendEvent('log', { level: 'info', message: `⏭️ SKIP (seen): ${listing.url.substring(0, 60)}` });
+            saveLog(jobId, 'info', `⏭️ SKIP (seen URL): ${post.url.substring(0, 60)}`);
             continue;
           }
 
-          totalCount++;
+          saveLog(jobId, 'ai', `🤖 AI: Analyzing "${post.title.substring(0, 50)}..."`);
 
-          // Fetch full post using shared browser
-          sendEvent('log', { level: 'info', message: `🔍 Fetching: ${listing.title.substring(0, 50)}...` });
-          let contacts = {};
-          let postBody = '';
-          let postFetched = false;
-          try {
-            const postHtml = await fetchCLPost(listing.url);
-            if (postHtml) {
-              const { body } = parseCraigslistPost(postHtml);
-              if (body && body.length > 20) {
-                postBody = body;
-                contacts = await extractContactsWithAI(body, listing.title);
-                sendEvent('log', { level: 'ai', message: `🧠 Email="${contacts.email || 'N/A'}", Phone="${contacts.phone || 'N/A'}"` });
-                postFetched = true;
-              }
-            }
-          } catch (fetchErr) {
-            sendEvent('log', { level: 'warning', message: `⚠️ Post fetch failed: ${fetchErr.message}` });
-          }
-          if (!postFetched) {
-            totalCount--;
-            continue;
-          }
+          const contacts = await extractContactsWithAI(post.body, post.title);
+          saveLog(jobId, 'ai', `🧠 AI Result: Email="${contacts.email || 'N/A'}", Budget="${contacts.budget || 'N/A'}"`);
 
-          // CL hides emails behind relay system — if no email from AI,
-          // try to find website in post body and do Hunter domain search
-          if (!contacts.email && postBody) {
-            const website = extractWebsiteFromText(postBody);
-            if (website) {
-              try {
-                const domain = new URL(website).hostname.replace(/^www\./, '');
-                sendEvent('log', { level: 'hunter', message: `🔍 Hunter domain search: ${domain}` });
-                const domainEmail = await findEmailByDomain(domain);
-                if (domainEmail) {
-                  contacts.email = domainEmail;
-                  contacts.website = website;
-                  sendEvent('log', { level: 'success', message: `📧 Hunter found: ${domainEmail}` });
-                }
-              } catch(e) {}
-            }
-          }
-
-          // Budget filter
           if (budgetFilter > 0 && contacts.budget) {
             const budgetNum = parseInt(contacts.budget.replace(/[^0-9]/g, ''));
             if (budgetNum > 0 && budgetNum < budgetFilter) {
-              sendEvent('log', { level: 'reject', message: `❌ REJECTED: Budget $${budgetNum} < $${budgetFilter}` });
-              totalCount--;
+              saveLog(jobId, 'reject', `❌ REJECTED: Budget $${budgetNum} < $${budgetFilter}`);
               continue;
             }
           }
 
-          // Verify email
           let emailVerified = false;
           let emailStatus = null;
           if (contacts.email) {
-            sendEvent('log', { level: 'hunter', message: `📧 HUNTER.IO: Verifying ${contacts.email}...` });
+            saveLog(jobId, 'hunter', `📧 HUNTER.IO: Verifying ${contacts.email}...`);
             const verification = await verifyEmail(contacts.email);
             emailVerified = verification.valid;
             emailStatus = verification.status;
-            sendEvent('log', { level: emailVerified ? 'success' : 'warning', message: `${emailVerified ? '✅' : '⚠️'} HUNTER.IO: ${emailStatus || 'unverified'}` });
+            saveLog(jobId, emailVerified ? 'success' : 'warning', `${emailVerified ? '✅' : '⚠️'} HUNTER.IO: ${emailStatus || 'unverified'}`);
           }
 
-          // Cross-job email dedup
+          // Check cross-job email duplicate
           let isDuplicate = 0;
           if (contacts.email && emailVerified) {
             const emailExists = db.prepare('SELECT id FROM intent_leads WHERE email = ? AND job_id != ?').get(contacts.email, jobId);
             if (emailExists) {
               isDuplicate = 1;
-              sendEvent('log', { level: 'warning', message: `♻️ DUPLICATE email: ${contacts.email}` });
+              saveLog(jobId, 'warning', `♻️ DUPLICATE email across jobs: ${contacts.email}`);
             }
           }
+
+          totalCount++;
 
           // Save to DB
           try {
@@ -1362,82 +1118,281 @@ app.post('/api/search', async (req, res) => {
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
             ).run(
               jobId,
-              contacts.name || 'Craigslist Poster',
-              listing.title,
-              contacts.description || listing.title,
+              contacts.name || post.author || 'Unknown',
+              post.title,
+              contacts.description || post.title.substring(0, 100),
               contacts.email || null,
               emailVerified ? 1 : 0,
               emailStatus,
               contacts.phone || null,
               contacts.whatsapp || null,
-              contacts.budget || listing.price || null,
-              city, 'craigslist', listing.url, new Date().toISOString(), isDuplicate
+              contacts.budget || null,
+              'Remote',
+              post.source,
+              post.url,
+              post.postedDate,
+              isDuplicate
             );
           } catch (dbErr) {
-            sendEvent('log', { level: 'warning', message: `⚠️ DB insert skipped (dupe URL)` });
-            totalCount--;
+            saveLog(jobId, 'warning', `⚠️ DB insert skipped (dupe URL): ${post.url.substring(0, 60)}`);
             continue;
           }
 
           db.prepare('UPDATE scrape_jobs SET total_count = ? WHERE id = ?').run(totalCount, jobId);
 
-          // Count + emit only verified non-duplicate leads
+          // Only count if verified and non-duplicate
           if (emailVerified && isDuplicate === 0) {
             verifiedCount++;
             db.prepare('UPDATE scrape_jobs SET verified_count = ? WHERE id = ?').run(verifiedCount, jobId);
-
-            const lead = {
-              id: totalCount,
-              name: contacts.name || 'Craigslist Poster',
-              title: listing.title,
-              description: contacts.description || listing.title,
-              email: contacts.email,
-              emailVerified: true,
-              emailStatus,
-              phone: contacts.phone || null,
-              whatsapp: contacts.whatsapp || null,
-              budget: contacts.budget || listing.price || null,
-              city,
-              source: 'craigslist',
-              url: listing.url,
-              postedDate: new Date().toISOString(),
-              scrapedAt: new Date().toISOString()
-            };
-            lead.contactPriority = getContactPriority(lead);
-            lead.contactType = getContactType(lead.contactPriority);
-
-            sendEvent('lead', { lead });
-            sendEvent('progress', { verified: verifiedCount, target: targetLeads });
-            sendEvent('log', { level: 'success', message: `✅ VERIFIED LEAD #${verifiedCount}: ${lead.name} | ${lead.email}` });
+            saveLog(jobId, 'success', `✅ VERIFIED LEAD #${verifiedCount}: ${contacts.name || post.author} | ${contacts.email}`);
           }
 
           await new Promise(r => setTimeout(r, 500));
         }
-
-      } catch (error) {
-        sendEvent('log', { level: 'error', message: `❌ ${city}: ${error.message}` });
       }
-      await new Promise(r => setTimeout(r, 500));
+
+      // ========== CRAIGSLIST ==========
+      if ((sourceFilter === 'all' || sourceFilter === 'craigslist') && verifiedCount < targetLeads) {
+        saveLog(jobId, 'info', `\n📍 Searching Craigslist (${cities.length} cities)...`);
+
+        // Reuse a single browser for all CL work to avoid connection exhaustion
+        let clBrowser = null;
+        try {
+          saveLog(jobId, 'brightdata', `🌐 Opening shared Craigslist browser...`);
+          clBrowser = await puppeteer.connect({ browserWSEndpoint: BROWSER_WS });
+        } catch (e) {
+          saveLog(jobId, 'error', `❌ Could not connect browser: ${e.message}`);
+        }
+
+        // Helper: fetch a single CL post using shared browser (with reconnect)
+        async function fetchCLPost(url) {
+          // Reconnect if dropped
+          if (!clBrowser || !clBrowser.isConnected()) {
+            try {
+              if (clBrowser) await clBrowser.close().catch(() => {});
+              clBrowser = await puppeteer.connect({ browserWSEndpoint: BROWSER_WS });
+              saveLog(jobId, 'brightdata', `🔄 CL browser reconnected`);
+            } catch (e) {
+              saveLog(jobId, 'error', `❌ CL reconnect failed: ${e.message}`);
+              return null;
+            }
+          }
+          const page = await clBrowser.newPage();
+          page.setDefaultNavigationTimeout(30000);
+          try {
+            await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
+            await new Promise(r => setTimeout(r, 1000));
+            const html = await page.content();
+            await page.close();
+            return html;
+          } catch (e) {
+            await page.close().catch(() => {});
+            return null;
+          }
+        }
+
+        // Helper: scrape CL city listings using shared browser
+        async function scrapeCLCity(city, kw) {
+          const results = [];
+          if (!clBrowser) return results;
+          const page = await clBrowser.newPage();
+          page.setDefaultNavigationTimeout(45000);
+          let apiItems = [];
+          page.on('response', async (response) => {
+            const u = response.url();
+            if (u.includes('sapi.craigslist.org') && u.includes('postings/search/full')) {
+              try {
+                const json = await response.json();
+                const items = json?.data?.items || [];
+                if (items.length > 0 && Array.isArray(items[0]) && items[0].length >= 10) {
+                  apiItems = items;
+                }
+              } catch(e) {}
+            }
+          });
+          const searchUrl = kw
+            ? `https://${city}.craigslist.org/search/ggg?query=${encodeURIComponent(kw)}`
+            : `https://${city}.craigslist.org/search/ggg`;
+          try {
+            await page.goto(searchUrl, { waitUntil: 'networkidle2', timeout: 45000 });
+            for (let i = 0; i < 10 && apiItems.length === 0; i++) {
+              await new Promise(r => setTimeout(r, 500));
+            }
+            for (const item of apiItems) {
+              if (Array.isArray(item) && item.length >= 10) {
+                const postingId = item[0];
+                const title = item[item.length - 1];
+                const slugArr = item.find(el => Array.isArray(el) && el[0] === 6);
+                const urlSlug = slugArr ? slugArr[1] : 'gig';
+                if (title && typeof title === 'string' && title.length > 5) {
+                  results.push({
+                    url: `https://${city}.craigslist.org/ggg/d/${urlSlug}/${postingId}.html`,
+                    title, city
+                  });
+                }
+              }
+            }
+            saveLog(jobId, 'success', `✅ ${city}: ${results.length} gigs`);
+          } catch (e) {
+            saveLog(jobId, 'error', `❌ ${city}: ${e.message}`);
+          } finally {
+            await page.close().catch(() => {});
+          }
+          return results;
+        }
+
+        for (const city of cities) {
+          if (verifiedCount >= targetLeads) break;
+
+          try {
+            const listings = await scrapeCLCity(city, keyword);
+            saveLog(jobId, 'info', `📊 ${city}: ${listings.length} listings`);
+
+            for (const listing of listings.slice(0, 20)) {
+              if (verifiedCount >= targetLeads) break;
+
+              // URL dedup
+              const urlExists = db.prepare('SELECT id FROM intent_leads WHERE url = ?').get(listing.url);
+              if (urlExists) {
+                saveLog(jobId, 'info', `⏭️ SKIP (seen): ${listing.url.substring(0, 60)}`);
+                continue;
+              }
+
+              totalCount++;
+
+              // Fetch full post using shared browser
+              saveLog(jobId, 'info', `🔍 Fetching: ${listing.title.substring(0, 50)}...`);
+              let contacts = {};
+              let postBody = '';
+              let postFetched = false;
+              try {
+                const postHtml = await fetchCLPost(listing.url);
+                if (postHtml) {
+                  const { body } = parseCraigslistPost(postHtml);
+                  if (body && body.length > 20) {
+                    postBody = body;
+                    contacts = await extractContactsWithAI(body, listing.title);
+                    saveLog(jobId, 'ai', `🧠 Email="${contacts.email || 'N/A'}", Phone="${contacts.phone || 'N/A'}"`);
+                    postFetched = true;
+                  }
+                }
+              } catch (fetchErr) {
+                saveLog(jobId, 'warning', `⚠️ Post fetch failed: ${fetchErr.message}`);
+              }
+              if (!postFetched) {
+                totalCount--;
+                continue;
+              }
+
+              // CL hides emails behind relay system — if no email from AI,
+              // try to find website in post body and do Hunter domain search
+              if (!contacts.email && postBody) {
+                const website = extractWebsiteFromText(postBody);
+                if (website) {
+                  try {
+                    const domain = new URL(website).hostname.replace(/^www\./, '');
+                    saveLog(jobId, 'hunter', `🔍 Hunter domain search: ${domain}`);
+                    const domainEmail = await findEmailByDomain(domain);
+                    if (domainEmail) {
+                      contacts.email = domainEmail;
+                      contacts.website = website;
+                      saveLog(jobId, 'success', `📧 Hunter found: ${domainEmail}`);
+                    }
+                  } catch(e) {}
+                }
+              }
+
+              // Budget filter
+              if (budgetFilter > 0 && contacts.budget) {
+                const budgetNum = parseInt(contacts.budget.replace(/[^0-9]/g, ''));
+                if (budgetNum > 0 && budgetNum < budgetFilter) {
+                  saveLog(jobId, 'reject', `❌ REJECTED: Budget $${budgetNum} < $${budgetFilter}`);
+                  totalCount--;
+                  continue;
+                }
+              }
+
+              // Verify email
+              let emailVerified = false;
+              let emailStatus = null;
+              if (contacts.email) {
+                saveLog(jobId, 'hunter', `📧 HUNTER.IO: Verifying ${contacts.email}...`);
+                const verification = await verifyEmail(contacts.email);
+                emailVerified = verification.valid;
+                emailStatus = verification.status;
+                saveLog(jobId, emailVerified ? 'success' : 'warning', `${emailVerified ? '✅' : '⚠️'} HUNTER.IO: ${emailStatus || 'unverified'}`);
+              }
+
+              // Cross-job email dedup
+              let isDuplicate = 0;
+              if (contacts.email && emailVerified) {
+                const emailExists = db.prepare('SELECT id FROM intent_leads WHERE email = ? AND job_id != ?').get(contacts.email, jobId);
+                if (emailExists) {
+                  isDuplicate = 1;
+                  saveLog(jobId, 'warning', `♻️ DUPLICATE email: ${contacts.email}`);
+                }
+              }
+
+              // Save to DB
+              try {
+                db.prepare(
+                  `INSERT INTO intent_leads (job_id, name, title, description, email, email_verified, email_status, phone, whatsapp, budget, city, source, url, posted_date, is_duplicate)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+                ).run(
+                  jobId,
+                  contacts.name || 'Craigslist Poster',
+                  listing.title,
+                  contacts.description || listing.title,
+                  contacts.email || null,
+                  emailVerified ? 1 : 0,
+                  emailStatus,
+                  contacts.phone || null,
+                  contacts.whatsapp || null,
+                  contacts.budget || listing.price || null,
+                  city, 'craigslist', listing.url, new Date().toISOString(), isDuplicate
+                );
+              } catch (dbErr) {
+                saveLog(jobId, 'warning', `⚠️ DB insert skipped (dupe URL)`);
+                totalCount--;
+                continue;
+              }
+
+              db.prepare('UPDATE scrape_jobs SET total_count = ? WHERE id = ?').run(totalCount, jobId);
+
+              // Count + emit only verified non-duplicate leads
+              if (emailVerified && isDuplicate === 0) {
+                verifiedCount++;
+                db.prepare('UPDATE scrape_jobs SET verified_count = ? WHERE id = ?').run(verifiedCount, jobId);
+                saveLog(jobId, 'success', `✅ VERIFIED LEAD #${verifiedCount}: ${contacts.name || 'Craigslist Poster'} | ${contacts.email}`);
+              }
+
+              await new Promise(r => setTimeout(r, 500));
+            }
+
+          } catch (error) {
+            saveLog(jobId, 'error', `❌ ${city}: ${error.message}`);
+          }
+          await new Promise(r => setTimeout(r, 500));
+        }
+
+        if (clBrowser) await clBrowser.close().catch(() => {});
+      }
+
+      // Mark job complete
+      db.prepare(
+        `UPDATE scrape_jobs SET status = 'complete', verified_count = ?, total_count = ?, completed_at = CURRENT_TIMESTAMP WHERE id = ?`
+      ).run(verifiedCount, totalCount, jobId);
+
+      saveLog(jobId, 'success', `\n🎯 SEARCH COMPLETE! Verified: ${verifiedCount} / ${targetLeads} | Total processed: ${totalCount}`);
+
+    } catch (fatalErr) {
+      console.error('Search background fatal:', fatalErr);
+      try {
+        db.prepare(`UPDATE scrape_jobs SET status = 'error', completed_at = CURRENT_TIMESTAMP WHERE id = ?`).run(jobId);
+        saveLog(jobId, 'error', `❌ Fatal background error: ${fatalErr.message}`);
+      } catch(e) {}
     }
-
-    if (clBrowser) await clBrowser.close().catch(() => {});
-  }
-
-  // Mark job complete
-  db.prepare(
-    `UPDATE scrape_jobs SET status = 'complete', verified_count = ?, total_count = ?, completed_at = CURRENT_TIMESTAMP WHERE id = ?`
-  ).run(verifiedCount, totalCount, jobId);
-
-  clearInterval(keepalive);
-  sendEvent('log', { level: 'success', message: `\n🎯 SEARCH COMPLETE! Verified: ${verifiedCount} / ${targetLeads} | Total processed: ${totalCount}` });
-  sendEvent('complete', {
-    jobId,
-    verified: verifiedCount,
-    total: totalCount,
-    target: targetLeads
   });
-
-  res.end();
 });
 
 // ============================================================
