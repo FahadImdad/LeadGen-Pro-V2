@@ -476,7 +476,14 @@ app.post('/api/search', async (req, res) => {
   };
   
   const leads = [];
-  const cities = region && region !== 'all' ? [region] : CRAIGSLIST_CITIES.slice(0, 50); // 50 cities GLOBAL
+  let cities;
+  if (!region || region === 'all') {
+    cities = CRAIGSLIST_CITIES.slice(0, 50);
+  } else if (region.includes(',')) {
+    cities = region.split(',').map(r => r.trim()).filter(r => r);
+  } else {
+    cities = [region];
+  }
 
   // Deduplication — load seen lead URLs
   const seenLeads = loadSeenLeads();

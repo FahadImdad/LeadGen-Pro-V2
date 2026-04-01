@@ -42,81 +42,89 @@
         <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4">
           
           <!-- Keyword -->
-          <div>
+          <div class="md:col-span-2">
             <label class="block text-sm text-gray-400 mb-1">Keyword</label>
-            <input type="text" id="keyword" placeholder="web developer, logo design..." 
+            <input type="text" id="keyword" placeholder="book publishing, web developer, logo design..." 
                    class="w-full bg-gray-700 border border-gray-600 rounded px-4 py-2 focus:border-blue-500 focus:outline-none">
           </div>
           
-          <!-- Region -->
-          <div>
-            <label class="block text-sm text-gray-400 mb-1">Region</label>
-            <select id="region" class="w-full bg-gray-700 border border-gray-600 rounded px-4 py-2 focus:border-blue-500 focus:outline-none">
-              <option value="all">🌍 ALL REGIONS (Global)</option>
-              <optgroup label="🇺🇸 USA">
-                <option value="sfbay">San Francisco</option>
-                <option value="newyork">New York</option>
-                <option value="losangeles">Los Angeles</option>
-                <option value="chicago">Chicago</option>
-                <option value="seattle">Seattle</option>
-                <option value="boston">Boston</option>
-                <option value="austin">Austin</option>
-                <option value="denver">Denver</option>
-                <option value="miami">Miami</option>
-                <option value="atlanta">Atlanta</option>
-                <option value="dallas">Dallas</option>
-                <option value="phoenix">Phoenix</option>
-                <option value="washingtondc">Washington DC</option>
-                <option value="houston">Houston</option>
-                <option value="portland">Portland</option>
-                <option value="sandiego">San Diego</option>
-              </optgroup>
-              <optgroup label="🇨🇦 Canada">
-                <option value="toronto">Toronto</option>
-                <option value="vancouver">Vancouver</option>
-                <option value="montreal">Montreal</option>
-                <option value="calgary">Calgary</option>
-                <option value="ottawa">Ottawa</option>
-              </optgroup>
-              <optgroup label="🇬🇧 UK & Ireland">
-                <option value="london">London</option>
-                <option value="manchester">Manchester</option>
-                <option value="birmingham">Birmingham</option>
-                <option value="edinburgh">Edinburgh</option>
-                <option value="dublin">Dublin</option>
-              </optgroup>
-              <optgroup label="🇪🇺 Europe">
-                <option value="amsterdam">Amsterdam</option>
-                <option value="berlin">Berlin</option>
-                <option value="paris">Paris</option>
-                <option value="munich">Munich</option>
-                <option value="vienna">Vienna</option>
-                <option value="zurich">Zurich</option>
-                <option value="stockholm">Stockholm</option>
-              </optgroup>
-              <optgroup label="🇦🇺 Australia & NZ">
-                <option value="sydney">Sydney</option>
-                <option value="melbourne">Melbourne</option>
-                <option value="brisbane">Brisbane</option>
-                <option value="auckland">Auckland</option>
-              </optgroup>
-              <optgroup label="🌏 Asia">
-                <option value="tokyo">Tokyo</option>
-                <option value="hongkong">Hong Kong</option>
-                <option value="singapore">Singapore</option>
-                <option value="bangkok">Bangkok</option>
-                <option value="seoul">Seoul</option>
-                <option value="manila">Manila</option>
-              </optgroup>
-              <optgroup label="🇮🇳 India">
-                <option value="bangalore">Bangalore</option>
-                <option value="delhi">Delhi</option>
-                <option value="mumbai">Mumbai</option>
-                <option value="chennai">Chennai</option>
-                <option value="hyderabad">Hyderabad</option>
-                <option value="pune">Pune</option>
-              </optgroup>
-            </select>
+          <!-- Region Multi-Select -->
+          <div class="md:col-span-2">
+            <div class="flex items-center justify-between mb-1">
+              <label class="block text-sm text-gray-400">Regions</label>
+              <div class="flex gap-2 text-xs">
+                <button onclick="selectAllRegions()" class="text-blue-400 hover:text-blue-300">All</button>
+                <span class="text-gray-600">|</span>
+                <button onclick="clearAllRegions()" class="text-gray-400 hover:text-gray-300">Clear</button>
+                <span class="text-gray-600">|</span>
+                <button onclick="toggleRegionPanel()" class="text-yellow-400 hover:text-yellow-300" id="regionToggleBtn">▼ Expand</button>
+              </div>
+            </div>
+            <!-- Selected tags display -->
+            <div id="regionTags" class="flex flex-wrap gap-1 mb-2 min-h-6">
+              <span class="text-xs text-gray-400 italic" id="regionTagsPlaceholder">🌍 All regions selected</span>
+            </div>
+            <!-- Collapsible region panel -->
+            <div id="regionPanel" class="hidden bg-gray-900 border border-gray-700 rounded p-3 max-h-48 overflow-y-auto">
+              <div class="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
+                <div class="col-span-2 text-gray-500 font-bold mb-1">🇺🇸 USA</div>
+                <label class="flex items-center gap-1 cursor-pointer"><input type="checkbox" class="region-cb" value="sfbay" checked> San Francisco</label>
+                <label class="flex items-center gap-1 cursor-pointer"><input type="checkbox" class="region-cb" value="newyork" checked> New York</label>
+                <label class="flex items-center gap-1 cursor-pointer"><input type="checkbox" class="region-cb" value="losangeles" checked> Los Angeles</label>
+                <label class="flex items-center gap-1 cursor-pointer"><input type="checkbox" class="region-cb" value="chicago" checked> Chicago</label>
+                <label class="flex items-center gap-1 cursor-pointer"><input type="checkbox" class="region-cb" value="seattle" checked> Seattle</label>
+                <label class="flex items-center gap-1 cursor-pointer"><input type="checkbox" class="region-cb" value="boston" checked> Boston</label>
+                <label class="flex items-center gap-1 cursor-pointer"><input type="checkbox" class="region-cb" value="austin" checked> Austin</label>
+                <label class="flex items-center gap-1 cursor-pointer"><input type="checkbox" class="region-cb" value="denver" checked> Denver</label>
+                <label class="flex items-center gap-1 cursor-pointer"><input type="checkbox" class="region-cb" value="miami" checked> Miami</label>
+                <label class="flex items-center gap-1 cursor-pointer"><input type="checkbox" class="region-cb" value="atlanta" checked> Atlanta</label>
+                <label class="flex items-center gap-1 cursor-pointer"><input type="checkbox" class="region-cb" value="dallas" checked> Dallas</label>
+                <label class="flex items-center gap-1 cursor-pointer"><input type="checkbox" class="region-cb" value="phoenix" checked> Phoenix</label>
+                <label class="flex items-center gap-1 cursor-pointer"><input type="checkbox" class="region-cb" value="washingtondc" checked> Washington DC</label>
+                <label class="flex items-center gap-1 cursor-pointer"><input type="checkbox" class="region-cb" value="houston" checked> Houston</label>
+                <label class="flex items-center gap-1 cursor-pointer"><input type="checkbox" class="region-cb" value="portland" checked> Portland</label>
+                <label class="flex items-center gap-1 cursor-pointer"><input type="checkbox" class="region-cb" value="sandiego" checked> San Diego</label>
+                <div class="col-span-2 text-gray-500 font-bold mt-2 mb-1">🇨🇦 Canada</div>
+                <label class="flex items-center gap-1 cursor-pointer"><input type="checkbox" class="region-cb" value="toronto" checked> Toronto</label>
+                <label class="flex items-center gap-1 cursor-pointer"><input type="checkbox" class="region-cb" value="vancouver" checked> Vancouver</label>
+                <label class="flex items-center gap-1 cursor-pointer"><input type="checkbox" class="region-cb" value="montreal" checked> Montreal</label>
+                <label class="flex items-center gap-1 cursor-pointer"><input type="checkbox" class="region-cb" value="calgary" checked> Calgary</label>
+                <label class="flex items-center gap-1 cursor-pointer"><input type="checkbox" class="region-cb" value="ottawa" checked> Ottawa</label>
+                <div class="col-span-2 text-gray-500 font-bold mt-2 mb-1">🇬🇧 UK & Ireland</div>
+                <label class="flex items-center gap-1 cursor-pointer"><input type="checkbox" class="region-cb" value="london" checked> London</label>
+                <label class="flex items-center gap-1 cursor-pointer"><input type="checkbox" class="region-cb" value="manchester" checked> Manchester</label>
+                <label class="flex items-center gap-1 cursor-pointer"><input type="checkbox" class="region-cb" value="birmingham" checked> Birmingham</label>
+                <label class="flex items-center gap-1 cursor-pointer"><input type="checkbox" class="region-cb" value="edinburgh" checked> Edinburgh</label>
+                <label class="flex items-center gap-1 cursor-pointer"><input type="checkbox" class="region-cb" value="dublin" checked> Dublin</label>
+                <div class="col-span-2 text-gray-500 font-bold mt-2 mb-1">🇪🇺 Europe</div>
+                <label class="flex items-center gap-1 cursor-pointer"><input type="checkbox" class="region-cb" value="amsterdam" checked> Amsterdam</label>
+                <label class="flex items-center gap-1 cursor-pointer"><input type="checkbox" class="region-cb" value="berlin" checked> Berlin</label>
+                <label class="flex items-center gap-1 cursor-pointer"><input type="checkbox" class="region-cb" value="paris" checked> Paris</label>
+                <label class="flex items-center gap-1 cursor-pointer"><input type="checkbox" class="region-cb" value="munich" checked> Munich</label>
+                <label class="flex items-center gap-1 cursor-pointer"><input type="checkbox" class="region-cb" value="vienna" checked> Vienna</label>
+                <label class="flex items-center gap-1 cursor-pointer"><input type="checkbox" class="region-cb" value="zurich" checked> Zurich</label>
+                <label class="flex items-center gap-1 cursor-pointer"><input type="checkbox" class="region-cb" value="stockholm" checked> Stockholm</label>
+                <div class="col-span-2 text-gray-500 font-bold mt-2 mb-1">🇦🇺 Australia & NZ</div>
+                <label class="flex items-center gap-1 cursor-pointer"><input type="checkbox" class="region-cb" value="sydney" checked> Sydney</label>
+                <label class="flex items-center gap-1 cursor-pointer"><input type="checkbox" class="region-cb" value="melbourne" checked> Melbourne</label>
+                <label class="flex items-center gap-1 cursor-pointer"><input type="checkbox" class="region-cb" value="brisbane" checked> Brisbane</label>
+                <label class="flex items-center gap-1 cursor-pointer"><input type="checkbox" class="region-cb" value="auckland" checked> Auckland</label>
+                <div class="col-span-2 text-gray-500 font-bold mt-2 mb-1">🌏 Asia</div>
+                <label class="flex items-center gap-1 cursor-pointer"><input type="checkbox" class="region-cb" value="tokyo" checked> Tokyo</label>
+                <label class="flex items-center gap-1 cursor-pointer"><input type="checkbox" class="region-cb" value="hongkong" checked> Hong Kong</label>
+                <label class="flex items-center gap-1 cursor-pointer"><input type="checkbox" class="region-cb" value="singapore" checked> Singapore</label>
+                <label class="flex items-center gap-1 cursor-pointer"><input type="checkbox" class="region-cb" value="bangkok" checked> Bangkok</label>
+                <label class="flex items-center gap-1 cursor-pointer"><input type="checkbox" class="region-cb" value="seoul" checked> Seoul</label>
+                <label class="flex items-center gap-1 cursor-pointer"><input type="checkbox" class="region-cb" value="manila" checked> Manila</label>
+                <div class="col-span-2 text-gray-500 font-bold mt-2 mb-1">🇮🇳 India</div>
+                <label class="flex items-center gap-1 cursor-pointer"><input type="checkbox" class="region-cb" value="bangalore" checked> Bangalore</label>
+                <label class="flex items-center gap-1 cursor-pointer"><input type="checkbox" class="region-cb" value="delhi" checked> Delhi</label>
+                <label class="flex items-center gap-1 cursor-pointer"><input type="checkbox" class="region-cb" value="mumbai" checked> Mumbai</label>
+                <label class="flex items-center gap-1 cursor-pointer"><input type="checkbox" class="region-cb" value="chennai" checked> Chennai</label>
+                <label class="flex items-center gap-1 cursor-pointer"><input type="checkbox" class="region-cb" value="hyderabad" checked> Hyderabad</label>
+                <label class="flex items-center gap-1 cursor-pointer"><input type="checkbox" class="region-cb" value="pune" checked> Pune</label>
+              </div>
+            </div>
           </div>
           
           <!-- Time Filter -->
@@ -388,6 +396,52 @@
     let allLeads = [];
     let currentFilter = 'all';
     let stats = { cities: 0, posts: 0, contacts: 0, verified: 0 };
+
+    function toggleRegionPanel() {
+      const panel = document.getElementById('regionPanel');
+      const btn = document.getElementById('regionToggleBtn');
+      panel.classList.toggle('hidden');
+      btn.textContent = panel.classList.contains('hidden') ? '▼ Expand' : '▲ Collapse';
+    }
+
+    function selectAllRegions() {
+      document.querySelectorAll('.region-cb').forEach(cb => cb.checked = true);
+      updateRegionTags();
+    }
+
+    function clearAllRegions() {
+      document.querySelectorAll('.region-cb').forEach(cb => cb.checked = false);
+      updateRegionTags();
+    }
+
+    function updateRegionTags() {
+      const checked = [...document.querySelectorAll('.region-cb:checked')];
+      const total = document.querySelectorAll('.region-cb').length;
+      const tagsDiv = document.getElementById('regionTags');
+      const placeholder = document.getElementById('regionTagsPlaceholder');
+
+      if (checked.length === 0) {
+        tagsDiv.innerHTML = '<span class="text-xs text-red-400 italic">No regions selected</span>';
+        return;
+      }
+      if (checked.length === total) {
+        tagsDiv.innerHTML = '<span class="text-xs text-gray-400 italic">🌍 All regions selected</span>';
+        return;
+      }
+      tagsDiv.innerHTML = checked.map(cb => 
+        `<span class="text-xs bg-blue-800 text-blue-200 px-2 py-0.5 rounded cursor-pointer" onclick="toggleRegion('${cb.value}')">${cb.parentElement.textContent.trim()} ✕</span>`
+      ).join('');
+    }
+
+    function toggleRegion(val) {
+      const cb = document.querySelector(`.region-cb[value="${val}"]`);
+      if (cb) { cb.checked = false; updateRegionTags(); }
+    }
+
+    // Update tags whenever a checkbox changes
+    document.addEventListener('change', e => {
+      if (e.target.classList.contains('region-cb')) updateRegionTags();
+    });
     
     async function startSearch() {
       const keyword = document.getElementById('keyword').value.trim();
@@ -396,7 +450,8 @@
         return;
       }
       
-      const region = document.getElementById('region').value;
+      const checkedRegions = [...document.querySelectorAll('.region-cb:checked')].map(cb => cb.value);
+      const region = checkedRegions.length === 0 ? 'all' : (checkedRegions.length === document.querySelectorAll('.region-cb').length ? 'all' : checkedRegions.join(','));
       const timeFilter = parseInt(document.getElementById('timeFilter').value);
       const sourceFilter = document.getElementById('sourceFilter').value;
       const budgetFilter = parseInt(document.getElementById('budgetFilter').value);
