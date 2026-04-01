@@ -786,6 +786,11 @@ app.post('/api/amazon', async (req, res) => {
   ).run(dateFrom, dateTo, keyword || null, targetLeads);
   const jobId = jobResult.lastInsertRowid;
 
+  // Keepalive ping every 20s to prevent Render from closing idle SSE connection
+  const keepalive = setInterval(() => {
+    res.write(': keepalive\n\n');
+  }, 20000);
+
   sendEvent('log', { level: 'info', message: `🚀 Starting Amazon Author Lead Gen (job #${jobId}, target: ${targetLeads} verified leads)...` });
   sendEvent('status', { message: 'Scraping Amazon new releases...', jobId });
 
@@ -997,6 +1002,7 @@ app.post('/api/amazon', async (req, res) => {
     `UPDATE scrape_jobs SET status = 'complete', verified_count = ?, total_count = ?, completed_at = CURRENT_TIMESTAMP WHERE id = ?`
   ).run(verifiedCount, totalCount, jobId);
 
+  clearInterval(keepalive);
   sendEvent('log', { level: 'success', message: `\n🎯 AMAZON COMPLETE! Verified: ${verifiedCount} / ${targetLeads} | Total processed: ${totalCount}` });
   sendEvent('complete', { jobId, verified: verifiedCount, total: totalCount, target: targetLeads });
 
@@ -1023,6 +1029,11 @@ app.post('/api/search', async (req, res) => {
   const sendEvent = (type, data) => {
     res.write(`data: ${JSON.stringify({ type, ...data })}\n\n`);
   };
+
+  // Keepalive ping every 20s to prevent Render from closing idle SSE connection
+  const keepalive = setInterval(() => {
+    res.write(': keepalive\n\n');
+  }, 20000);
 
   // Create scrape job
   const jobResult = db.prepare(
@@ -1417,6 +1428,7 @@ app.post('/api/search', async (req, res) => {
     `UPDATE scrape_jobs SET status = 'complete', verified_count = ?, total_count = ?, completed_at = CURRENT_TIMESTAMP WHERE id = ?`
   ).run(verifiedCount, totalCount, jobId);
 
+  clearInterval(keepalive);
   sendEvent('log', { level: 'success', message: `\n🎯 SEARCH COMPLETE! Verified: ${verifiedCount} / ${targetLeads} | Total processed: ${totalCount}` });
   sendEvent('complete', {
     jobId,
