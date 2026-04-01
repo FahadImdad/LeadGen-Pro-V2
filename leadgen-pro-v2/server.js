@@ -674,27 +674,36 @@ function isBlockedEmail(email) {
   return false;
 }
 
-// Check if email is likely the author's personal email (contains their name)
+// Check if email is likely the author's personal email (must contain their name)
 function isLikelyAuthorEmail(email, authorName) {
   if (!email || !authorName) return false;
   const local = email.split('@')[0].toLowerCase();
   const domain = (email.split('@')[1] || '').toLowerCase();
-  const nameParts = authorName.toLowerCase().replace(/[^a-z\s]/g, '').split(/\s+/).filter(p => p.length > 2);
+  const cleanName = authorName.toLowerCase().replace(/[^a-z\s]/g, '');
+  const nameParts = cleanName.split(/\s+/).filter(p => p.length > 2);
+
+  // Check if string A contains at least 80% of string B's chars (fuzzy match for typos/variations)
+  function fuzzyContains(haystack, needle) {
+    if (haystack.includes(needle)) return true;
+    if (needle.length < 4) return false;
+    // Try substring match with 1 char difference (vivika vs viveka)
+    for (let i = 0; i <= needle.length - 4; i++) {
+      const sub = needle.substring(i, i + 4);
+      if (haystack.includes(sub)) return true;
+    }
+    return false;
+  }
 
   // If email domain contains author name → strong signal
-  const domainHasName = nameParts.some(part => domain.includes(part));
+  const domainHasName = nameParts.some(part => fuzzyContains(domain, part));
   if (domainHasName) return true;
 
   // If local part contains author's first or last name → good signal
-  const localHasName = nameParts.some(part => local.includes(part));
+  const localHasName = nameParts.some(part => fuzzyContains(local, part));
   if (localHasName) return true;
 
-  // If it's a gmail/yahoo etc, require name in local part
-  const isGenericDomain = /^(gmail|yahoo|hotmail|outlook|icloud|me|mac|aol|protonmail)\./.test(domain);
-  if (isGenericDomain && !localHasName) return false;
-
-  // For custom domains, trust it if website was real author site
-  return true;
+  // Don't trust random custom domain emails
+  return false;
 }
 
 // Amazon base URLs — each supports pagination via ?pg=N (up to 5 pages = 250 books per category)
@@ -715,7 +724,7 @@ const AMAZON_BASE_URLS = [
   'https://www.amazon.com/best-sellers-books-Amazon/zgbs/books/4',         // Computers
   'https://www.amazon.com/best-sellers-books-Amazon/zgbs/books/173507',    // Arts & Photography
 ];
-const MAX_PAGES_PER_URL = 5; // Amazon new-releases/best-sellers support up to 5 pages
+const MAX_PAGES_PER_URL = 2; // Amazon new-releases/best-sellers support up to 2 pages
 
 function buildAmazonUrl(dateFrom, dateTo, page = 1) { return null; }
 
