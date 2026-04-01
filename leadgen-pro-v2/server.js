@@ -668,46 +668,56 @@ function isBlockedEmail(email) {
   return false;
 }
 
-// Multiple Amazon search URLs to get diverse books across categories and date filters
+// Amazon URLs — use Web Unlocker (not browser) for these pages since they return full HTML
 const AMAZON_SEARCH_URLS = [
-  // All books - different date filters
-  'https://www.amazon.com/s?i=stripbooks&s=date-desc-rank&rh=n%3A283155%2Cp_n_publication_date%3A1250226011', // today
-  'https://www.amazon.com/s?i=stripbooks&s=date-desc-rank&rh=n%3A283155%2Cp_n_publication_date%3A1250227011', // last 7 days
-  'https://www.amazon.com/s?i=stripbooks&s=date-desc-rank&rh=n%3A283155%2Cp_n_publication_date%3A1250225011', // last 30 days
-  'https://www.amazon.com/s?i=stripbooks&s=date-desc-rank&rh=n%3A283155',                                     // all time new
-  // Business & Money
-  'https://www.amazon.com/s?i=stripbooks&s=date-desc-rank&rh=n%3A2635',
-  // Self Help
-  'https://www.amazon.com/s?i=stripbooks&s=date-desc-rank&rh=n%3A4736',
-  // Health & Fitness
-  'https://www.amazon.com/s?i=stripbooks&s=date-desc-rank&rh=n%3A6',
-  // Biographies
-  'https://www.amazon.com/s?i=stripbooks&s=date-desc-rank&rh=n%3A486994011',
-  // Religion & Spirituality
-  'https://www.amazon.com/s?i=stripbooks&s=date-desc-rank&rh=n%3A22',
-  // Parenting & Relationships
-  'https://www.amazon.com/s?i=stripbooks&s=date-desc-rank&rh=n%3A4919',
-  // Education & Teaching
-  'https://www.amazon.com/s?i=stripbooks&s=date-desc-rank&rh=n%3A4677',
-  // Science & Math
-  'https://www.amazon.com/s?i=stripbooks&s=date-desc-rank&rh=n%3A75',
-  // History
-  'https://www.amazon.com/s?i=stripbooks&s=date-desc-rank&rh=n%3A9',
-  // Politics & Social Sciences
-  'https://www.amazon.com/s?i=stripbooks&s=date-desc-rank&rh=n%3A11232',
-  // Travel
-  'https://www.amazon.com/s?i=stripbooks&s=date-desc-rank&rh=n%3A2642',
+  'https://www.amazon.com/gp/new-releases/books/ref=zg_bsnr_pg_1?pg=1',
+  'https://www.amazon.com/gp/new-releases/books/ref=zg_bsnr_pg_2?pg=2',
+  'https://www.amazon.com/gp/new-releases/books/ref=zg_bsnr_pg_3?pg=3',
+  'https://www.amazon.com/gp/new-releases/books/ref=zg_bsnr_pg_4?pg=4',
+  'https://www.amazon.com/gp/new-releases/books/ref=zg_bsnr_pg_5?pg=5',
+  // Best sellers by category
+  'https://www.amazon.com/best-sellers-books-Amazon/zgbs/books/2635',      // Business
+  'https://www.amazon.com/best-sellers-books-Amazon/zgbs/books/4736',      // Self Help
+  'https://www.amazon.com/best-sellers-books-Amazon/zgbs/books/6',         // Health
+  'https://www.amazon.com/best-sellers-books-Amazon/zgbs/books/486994011', // Biographies
+  'https://www.amazon.com/best-sellers-books-Amazon/zgbs/books/22',        // Religion
+  'https://www.amazon.com/best-sellers-books-Amazon/zgbs/books/4919',      // Parenting
+  'https://www.amazon.com/best-sellers-books-Amazon/zgbs/books/75',        // Science
+  'https://www.amazon.com/best-sellers-books-Amazon/zgbs/books/9',         // History
+  'https://www.amazon.com/best-sellers-books-Amazon/zgbs/books/11232',     // Politics
+  'https://www.amazon.com/best-sellers-books-Amazon/zgbs/books/2642',      // Travel
 ];
 
-function buildAmazonUrl(dateFrom, dateTo, page = 1) {
-  // Cycle through different search URLs based on loopCount and page to maximize unique books
-  return null; // replaced by getAmazonUrl below
-}
+function buildAmazonUrl(dateFrom, dateTo, page = 1) { return null; }
 
 function getAmazonUrl(urlIndex, page) {
-  const base = AMAZON_SEARCH_URLS[urlIndex % AMAZON_SEARCH_URLS.length];
-  if (page > 1) return base + `&page=${page}`;
-  return base;
+  return AMAZON_SEARCH_URLS[urlIndex % AMAZON_SEARCH_URLS.length];
+}
+
+// Parse Amazon new-releases / best-seller HTML (Web Unlocker) into book objects
+function parseAmazonNewReleasesHtml(html) {
+  const books = [];
+  const asinSet = new Set((html.match(/data-asin="([A-Z0-9]{8,12})"/g)||[]).map(m => m.match(/"([^"]+)"/)[1]));
+
+  for (const asin of asinSet) {
+    const idx = html.indexOf(`data-asin="${asin}"`);
+    if (idx < 0) continue;
+    const chunk = html.substring(idx, idx + 2500);
+
+    // Title from p13n class or href slug
+    const titleM = chunk.match(/p13n-sc-css-line-clamp[^"]*"[^>]*>([^<]{5,150})<\//) ||
+                   chunk.match(/href="\/[^"]+\/dp\/[A-Z0-9]+"[^>]*><span[^>]*>([^<]{5,150})<\//);
+    const title = titleM ? titleM[1].trim() : '';
+    if (!title) continue;
+
+    // Author from a-size-small text node between rating and price
+    const authorM = chunk.match(/a-size-small">\s*([\w][\w\s.,''-]{2,50}?)\s*[\d<]/) ||
+                    chunk.match(/a-link-child"[^>]*>([^<]{3,60})<\/a>/);
+    const author = authorM ? authorM[1].trim() : 'Unknown';
+
+    books.push({ asin, title, author, publishDate: '', amazonUrl: `https://www.amazon.com/dp/${asin}` });
+  }
+  return books;
 }
 
 // Scrape Amazon new releases and return book objects
@@ -1131,40 +1141,25 @@ app.post('/api/amazon', async (req, res) => {
       const maxPages = 20; // 20 pages per category URL
       let keepGoing = true;
       let consecutiveEmpty = 0;
-      let amazonBrowser = null;
-      let urlIndex = 0; // which category URL we're currently on
+      let urlIndex = 0;
       const seenAsinsThisRun = new Set();
 
       try {
-        saveLog(jobId, 'brightdata', `🌐 Connecting to Scraping Browser for Amazon...`);
-        amazonBrowser = await puppeteer.connect({ browserWSEndpoint: BROWSER_WS });
+        saveLog(jobId, 'info', `🚀 Amazon scraper using Web Unlocker (no browser needed)...`);
 
-        // Scrape 3 Amazon pages in parallel per iteration
+        // Scrape Amazon page via Web Unlocker (no browser needed — returns full HTML)
         async function scrapeOnePage(pageNum) {
           const pgUrl = getAmazonUrl(urlIndex, pageNum);
-          if (!amazonBrowser || !amazonBrowser.isConnected()) {
-            try { if (amazonBrowser) await amazonBrowser.close().catch(()=>{}); amazonBrowser = await puppeteer.connect({ browserWSEndpoint: BROWSER_WS }); }
-            catch(e) { return []; }
-          }
-          const pg = await amazonBrowser.newPage();
-          pg.setDefaultNavigationTimeout(90000);
           try {
-            await pg.goto(pgUrl, { waitUntil: 'domcontentloaded', timeout: 90000 });
-            await pg.waitForSelector('[data-component-type="s-search-result"]', { timeout: 20000 }).catch(()=>{});
-            await new Promise(r => setTimeout(r, 2500));
-            const books = await pg.$$eval('[data-component-type="s-search-result"]', items => items.map(item => {
-              const asin = item.getAttribute('data-asin')||''; if(!asin||asin.length<8) return null;
-              const titleEl = item.querySelector('h2 a span')||item.querySelector('h2 span')||item.querySelector('.a-size-medium')||item.querySelector('.a-size-base-plus');
-              const title = titleEl ? titleEl.textContent.trim() : ''; if(!title||title.length<3) return null;
-              const authorEl = item.querySelector('.a-row .a-size-base+ .a-size-base')||item.querySelector('[class*="author"] .a-link-normal')||item.querySelector('.a-row a.a-link-normal');
-              const author = authorEl ? authorEl.textContent.trim() : '';
-              const dateEl = item.querySelector('.a-color-secondary .a-size-base')||item.querySelector('[class*="publication"]');
-              const rawDate = dateEl ? dateEl.textContent.trim() : '';
-              const publishDate = /\d{4}/.test(rawDate) ? rawDate : '';
-              return { asin, title, author: author||'Unknown', publishDate };
-            }).filter(b => b&&b.asin&&b.title)).catch(()=>[]);
-            await pg.close(); return books;
-          } catch(e) { await pg.close().catch(()=>{}); return []; }
+            saveLog(jobId, 'info', `🌐 Fetching: ${pgUrl.substring(30,70)}...`);
+            const html = await scrapeWithBrightData(pgUrl);
+            if (!html) return [];
+            const books = parseAmazonNewReleasesHtml(html);
+            return books;
+          } catch(e) {
+            saveLog(jobId, 'warning', `⚠️ Page fetch error: ${e.message}`);
+            return [];
+          }
         }
 
         while (keepGoing) {
@@ -1307,8 +1302,6 @@ app.post('/api/amazon', async (req, res) => {
       } catch (error) {
         saveLog(jobId, 'error', `❌ Fatal error: ${error.message}`);
         console.error('Amazon background error:', error);
-      } finally {
-        if (amazonBrowser) await amazonBrowser.close().catch(() => {});
       }
 
       // Mark job complete
