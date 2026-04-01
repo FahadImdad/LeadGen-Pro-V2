@@ -323,6 +323,158 @@ function getContactType(priority) {
 }
 
 // Scrape Reddit for freelance GIGS
+// ── Upwork scraper ─────────────────────────────────────────────────────
+async function scrapeUpwork(keyword, dateFrom, dateTo, sendEvent) {
+  const results = [];
+  try {
+    const url = `https://www.upwork.com/search/jobs/?q=${encodeURIComponent(keyword)}&sort=recency`;
+    sendEvent('log', { level: 'brightdata', message: `🌐 Upwork: Searching "${keyword}"...` });
+    const html = await scrapeWithBrightData(url);
+    if (!html) return results;
+
+    const fromTs = new Date(dateFrom).getTime();
+    const toTs = new Date(dateTo).getTime() + 86400000;
+
+    // Extract job listings from Upwork JSON data embedded in page
+    const jsonMatch = html.match(/window\.__INITIAL_STATE__\s*=\s*(\{[\s\S]+?\});\s*<\/script>/);
+    if (jsonMatch) {
+      try {
+        const state = JSON.parse(jsonMatch[1]);
+        const jobs = state?.jobSearch?.results?.jobs || [];
+        for (const job of jobs) {
+          const postedTs = new Date(job.postedOn || job.createdOn || 0).getTime();
+          if (postedTs < fromTs || postedTs > toTs) continue;
+          results.push({
+            title: job.title || 'Upwork Job',
+            body: job.description || job.snippet || '',
+            url: `https://www.upwork.com/jobs/${job.ciphertext || job.id}`,
+            postedDate: new Date(postedTs).toISOString(),
+            source: 'upwork',
+            author: 'client'
+          });
+        }
+      } catch(e) {}
+    }
+
+    // Fallback: regex extraction
+    if (results.length === 0) {
+      const titleMatches = html.matchAll(/<h2[^>]*class="[^"]*job-tile-title[^"]*"[^>]*>[\s\S]*?<a[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi);
+      for (const m of titleMatches) {
+        results.push({
+          title: m[2].replace(/<[^>]+>/g, '').trim(),
+          body: '',
+          url: m[1].startsWith('http') ? m[1] : `https://www.upwork.com${m[1]}`,
+          postedDate: new Date().toISOString(),
+          source: 'upwork',
+          author: 'client'
+        });
+      }
+    }
+
+    sendEvent('log', { level: 'success', message: `✅ Upwork: ${results.length} jobs found` });
+  } catch(e) {
+    sendEvent('log', { level: 'warning', message: `⚠️ Upwork error: ${e.message}` });
+  }
+  return results;
+}
+
+// ── Fiverr buyer requests scraper ──────────────────────────────────────
+async function scrapeFiverr(keyword, sendEvent) {
+  const results = [];
+  try {
+    const url = `https://www.fiverr.com/search/gigs?query=${encodeURIComponent(keyword)}&filter=rating`;
+    sendEvent('log', { level: 'brightdata', message: `🌐 Fiverr: Searching "${keyword}"...` });
+    const html = await scrapeWithBrightData(url);
+    if (!html) return results;
+
+    // Fiverr buyer requests page
+    const reqUrl = `https://www.fiverr.com/requests/search?q=${encodeURIComponent(keyword)}`;
+    const reqHtml = await scrapeWithBrightData(reqUrl);
+    if (reqHtml) {
+      const titleMatches = reqHtml.matchAll(/"title"\s*:\s*"([^"]{10,200})"/g);
+      for (const m of titleMatches) {
+        results.push({
+          title: m[1],
+          body: m[1],
+          url: reqUrl,
+          postedDate: new Date().toISOString(),
+          source: 'fiverr',
+          author: 'buyer'
+        });
+      }
+    }
+    sendEvent('log', { level: 'success', message: `✅ Fiverr: ${results.length} buyer requests found` });
+  } catch(e) {
+    sendEvent('log', { level: 'warning', message: `⚠️ Fiverr error: ${e.message}` });
+  }
+  return results;
+}
+
+// ── Twitter/X intent search ────────────────────────────────────────────
+async function scrapeTwitter(keyword, dateFrom, dateTo, sendEvent) {
+  const results = [];
+  try {
+    // Search Twitter for people asking about the keyword
+    const query = `"${keyword}" (need OR looking OR hire OR want) -is:retweet lang:en`;
+    const url = `https://twitter.com/search?q=${encodeURIComponent(query)}&f=live`;
+    sendEvent('log', { level: 'brightdata', message: `🌐 Twitter/X: Searching for intent...` });
+    const html = await scrapeWithBrightData(url);
+    if (!html) return results;
+
+    const fromTs = new Date(dateFrom).getTime();
+    const toTs = new Date(dateTo).getTime() + 86400000;
+
+    // Extract tweets from JSON
+    const jsonMatches = html.matchAll(/"full_text"\s*:\s*"([^"]{20,500})"/g);
+    for (const m of jsonMatches) {
+      const text = m[1].replace(/\\n/g, ' ').replace(/\\u[\da-f]{4}/gi, '');
+      if (text.toLowerCase().includes(keyword.toLowerCase())) {
+        results.push({
+          title: text.substring(0, 100),
+          body: text,
+          url: url,
+          postedDate: new Date().toISOString(),
+          source: 'twitter',
+          author: 'twitter_user'
+        });
+      }
+    }
+    sendEvent('log', { level: 'success', message: `✅ Twitter: ${results.length} intent posts found` });
+  } catch(e) {
+    sendEvent('log', { level: 'warning', message: `⚠️ Twitter error: ${e.message}` });
+  }
+  return results;
+}
+
+// ── Facebook Groups search ─────────────────────────────────────────────
+async function scrapeFacebookGroups(keyword, sendEvent) {
+  const results = [];
+  try {
+    const url = `https://www.facebook.com/search/posts/?q=${encodeURIComponent(keyword + ' need help')}`;
+    sendEvent('log', { level: 'brightdata', message: `🌐 Facebook: Searching groups...` });
+    const html = await scrapeWithBrightData(url);
+    if (!html) return results;
+
+    // Extract post text from Facebook
+    const postMatches = html.matchAll(/"message"\s*:\s*\{"text"\s*:\s*"([^"]{20,500})"/g);
+    for (const m of postMatches) {
+      const text = m[1].replace(/\\n/g, ' ');
+      results.push({
+        title: text.substring(0, 100),
+        body: text,
+        url: url,
+        postedDate: new Date().toISOString(),
+        source: 'facebook',
+        author: 'facebook_user'
+      });
+    }
+    sendEvent('log', { level: 'success', message: `✅ Facebook: ${results.length} posts found` });
+  } catch(e) {
+    sendEvent('log', { level: 'warning', message: `⚠️ Facebook error: ${e.message}` });
+  }
+  return results;
+}
+
 async function scrapeReddit(keyword, sendEvent, dateFrom, dateTo) {
   const results = [];
 
@@ -1229,6 +1381,76 @@ app.post('/api/search', async (req, res) => {
         cities = region.split(',').map(r => r.trim()).filter(r => r);
       } else {
         cities = [region];
+      }
+
+      // Helper: process any post array through AI + Hunter + dedup
+      async function processLeadPosts(posts, framework) {
+        for (const post of posts) {
+          if (verifiedCount >= targetLeads) break;
+          const urlExists = db.prepare('SELECT id FROM intent_leads WHERE url = ?').get(post.url);
+          if (urlExists) continue;
+
+          const contacts = await extractContactsWithAI(post.body, post.title);
+          if (budgetFilter > 0 && contacts.budget) {
+            const budgetNum = parseInt((contacts.budget || '').replace(/[^0-9]/g, ''));
+            if (budgetNum > 0 && budgetNum < budgetFilter) continue;
+          }
+
+          let emailVerified = false, emailStatus = null;
+          if (contacts.email) {
+            const v = await verifyEmail(contacts.email);
+            emailVerified = v.valid; emailStatus = v.status;
+          }
+
+          let isDuplicate = 0;
+          if (contacts.email && emailVerified) {
+            const emailExists = db.prepare('SELECT id FROM intent_leads WHERE email = ? AND job_id != ?').get(contacts.email, jobId);
+            if (emailExists) isDuplicate = 1;
+          }
+
+          totalCount++;
+          try {
+            db.prepare(`INSERT INTO intent_leads (job_id,name,title,description,email,email_verified,email_status,phone,whatsapp,budget,city,source,url,posted_date,is_duplicate) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+              .run(jobId, contacts.name||post.author||'Unknown', post.title, contacts.description||post.title.substring(0,100), contacts.email||null, emailVerified?1:0, emailStatus, contacts.phone||null, contacts.whatsapp||null, contacts.budget||null, 'Remote', post.source, post.url, post.postedDate, isDuplicate);
+          } catch(dbErr) { totalCount--; continue; }
+
+          db.prepare('UPDATE scrape_jobs SET total_count=? WHERE id=?').run(totalCount, jobId);
+
+          if (emailVerified && isDuplicate === 0) {
+            verifiedCount++;
+            db.prepare('UPDATE scrape_jobs SET verified_count=? WHERE id=?').run(verifiedCount, jobId);
+            saveLog(jobId, 'success', `✅ VERIFIED #${verifiedCount}: ${contacts.email} via ${post.source}`);
+          }
+          await new Promise(r => setTimeout(r, 300));
+        }
+      }
+
+      // ========== UPWORK ==========
+      if ((sourceFilter === 'all' || sourceFilter === 'upwork') && verifiedCount < targetLeads) {
+        saveLog(jobId, 'info', `🔍 Searching Upwork...`);
+        const upworkPosts = await scrapeUpwork(keyword, dateFrom, dateTo, sendEvent);
+        await processLeadPosts(upworkPosts, 'upwork');
+      }
+
+      // ========== FIVERR ==========
+      if ((sourceFilter === 'all' || sourceFilter === 'fiverr') && verifiedCount < targetLeads) {
+        saveLog(jobId, 'info', `🔍 Searching Fiverr buyer requests...`);
+        const fiverrPosts = await scrapeFiverr(keyword, sendEvent);
+        await processLeadPosts(fiverrPosts, 'fiverr');
+      }
+
+      // ========== TWITTER/X ==========
+      if ((sourceFilter === 'all' || sourceFilter === 'twitter') && verifiedCount < targetLeads) {
+        saveLog(jobId, 'info', `🔍 Searching Twitter/X...`);
+        const twitterPosts = await scrapeTwitter(keyword, dateFrom, dateTo, sendEvent);
+        await processLeadPosts(twitterPosts, 'twitter');
+      }
+
+      // ========== FACEBOOK ==========
+      if ((sourceFilter === 'all' || sourceFilter === 'facebook') && verifiedCount < targetLeads) {
+        saveLog(jobId, 'info', `🔍 Searching Facebook Groups...`);
+        const fbPosts = await scrapeFacebookGroups(keyword, sendEvent);
+        await processLeadPosts(fbPosts, 'facebook');
       }
 
       // ========== REDDIT FIRST ==========
