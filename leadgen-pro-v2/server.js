@@ -1081,22 +1081,111 @@ app.post('/api/search', async (req, res) => {
 
           totalCount++;
 
-          // Craigslist leads have no email — save but don't count toward verified quota
+          // Fetch full post to extract contact info
+          sendEvent('log', { level: 'info', message: `🔍 Fetching full post: ${listing.title.substring(0, 50)}...` });
+          let contacts = {};
+          try {
+            const postHtml = await scrapeWithBrightData(listing.url);
+            if (postHtml) {
+              const { body } = parseCraigslistPost(postHtml);
+              if (body) {
+                sendEvent('log', { level: 'ai', message: `🤖 AI extracting contacts from post...` });
+                contacts = await extractContactsWithAI(body, listing.title);
+                sendEvent('log', { level: 'ai', message: `🧠 AI: Email="${contacts.email || 'N/A'}", Phone="${contacts.phone || 'N/A'}"` });
+              }
+            }
+          } catch (fetchErr) {
+            sendEvent('log', { level: 'warning', message: `⚠️ Couldn't fetch post: ${fetchErr.message}` });
+          }
+
+          // Budget filter
+          if (budgetFilter > 0 && contacts.budget) {
+            const budgetNum = parseInt(contacts.budget.replace(/[^0-9]/g, ''));
+            if (budgetNum > 0 && budgetNum < budgetFilter) {
+              sendEvent('log', { level: 'reject', message: `❌ REJECTED: Budget $${budgetNum} < $${budgetFilter}` });
+              totalCount--;
+              continue;
+            }
+          }
+
+          // Verify email
+          let emailVerified = false;
+          let emailStatus = null;
+          if (contacts.email) {
+            sendEvent('log', { level: 'hunter', message: `📧 HUNTER.IO: Verifying ${contacts.email}...` });
+            const verification = await verifyEmail(contacts.email);
+            emailVerified = verification.valid;
+            emailStatus = verification.status;
+            sendEvent('log', { level: emailVerified ? 'success' : 'warning', message: `${emailVerified ? '✅' : '⚠️'} HUNTER.IO: ${emailStatus || 'unverified'}` });
+          }
+
+          // Cross-job email dedup
+          let isDuplicate = 0;
+          if (contacts.email && emailVerified) {
+            const emailExists = db.prepare('SELECT id FROM intent_leads WHERE email = ? AND job_id != ?').get(contacts.email, jobId);
+            if (emailExists) {
+              isDuplicate = 1;
+              sendEvent('log', { level: 'warning', message: `♻️ DUPLICATE email: ${contacts.email}` });
+            }
+          }
+
+          // Save to DB
           try {
             db.prepare(
-              `INSERT INTO intent_leads (job_id, name, title, description, email, email_verified, phone, whatsapp, budget, city, source, url, posted_date, is_duplicate)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+              `INSERT INTO intent_leads (job_id, name, title, description, email, email_verified, email_status, phone, whatsapp, budget, city, source, url, posted_date, is_duplicate)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
             ).run(
-              jobId, 'Craigslist Poster', listing.title, listing.title,
-              null, 0, null, null, listing.price || null,
-              city, 'craigslist', listing.url, new Date().toISOString(), 0
+              jobId,
+              contacts.name || 'Craigslist Poster',
+              listing.title,
+              contacts.description || listing.title,
+              contacts.email || null,
+              emailVerified ? 1 : 0,
+              emailStatus,
+              contacts.phone || null,
+              contacts.whatsapp || null,
+              contacts.budget || listing.price || null,
+              city, 'craigslist', listing.url, new Date().toISOString(), isDuplicate
             );
           } catch (dbErr) {
             sendEvent('log', { level: 'warning', message: `⚠️ DB insert skipped (dupe URL)` });
+            totalCount--;
             continue;
           }
 
           db.prepare('UPDATE scrape_jobs SET total_count = ? WHERE id = ?').run(totalCount, jobId);
+
+          // Count + emit only verified non-duplicate leads
+          if (emailVerified && isDuplicate === 0) {
+            verifiedCount++;
+            db.prepare('UPDATE scrape_jobs SET verified_count = ? WHERE id = ?').run(verifiedCount, jobId);
+
+            const lead = {
+              id: totalCount,
+              name: contacts.name || 'Craigslist Poster',
+              title: listing.title,
+              description: contacts.description || listing.title,
+              email: contacts.email,
+              emailVerified: true,
+              emailStatus,
+              phone: contacts.phone || null,
+              whatsapp: contacts.whatsapp || null,
+              budget: contacts.budget || listing.price || null,
+              city,
+              source: 'craigslist',
+              url: listing.url,
+              postedDate: new Date().toISOString(),
+              scrapedAt: new Date().toISOString()
+            };
+            lead.contactPriority = getContactPriority(lead);
+            lead.contactType = getContactType(lead.contactPriority);
+
+            sendEvent('lead', { lead });
+            sendEvent('progress', { verified: verifiedCount, target: targetLeads });
+            sendEvent('log', { level: 'success', message: `✅ VERIFIED LEAD #${verifiedCount}: ${lead.name} | ${lead.email}` });
+          }
+
+          await new Promise(r => setTimeout(r, 500));
         }
 
         sendEvent('log', { level: 'info', message: `📊 ${city}: ${listings.length} listings added to DB` });
