@@ -8,6 +8,8 @@ require('dotenv').config();
 
 const db = require('./db');
 
+const BUILD_TIME = new Date().toISOString();
+
 const app = express();
 app.use(cors());
 app.use(express.json());
@@ -642,6 +644,17 @@ app.get('/api/health', (req, res) => {
       hunter: !!HUNTER_API_KEY,
       gemini: !!GEMINI_API_KEY
     }
+  });
+});
+
+// GET /api/version — returns git commit info baked at build time
+app.get('/api/version', (req, res) => {
+  res.json({
+    commit: process.env.RENDER_GIT_COMMIT || 'local',
+    commitShort: (process.env.RENDER_GIT_COMMIT || 'local').substring(0, 7),
+    branch: process.env.RENDER_GIT_BRANCH || 'master',
+    deployedAt: process.env.RENDER_SERVICE_ID ? new Date().toISOString() : null,
+    buildTime: BUILD_TIME
   });
 });
 

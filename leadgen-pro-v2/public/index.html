@@ -22,6 +22,10 @@
     <div class="text-center mb-8">
       <h1 class="text-4xl font-bold text-blue-400 mb-2">🎯 LeadGen Pro v2</h1>
       <p class="text-gray-400">Find intent leads — people actively seeking services</p>
+      <div id="versionBadge" class="mt-2 inline-flex items-center gap-2 bg-gray-800 border border-gray-700 rounded-full px-3 py-1 text-xs text-gray-400">
+        <span class="w-2 h-2 rounded-full bg-gray-600 inline-block" id="versionDot"></span>
+        <span id="versionText">loading...</span>
+      </div>
     </div>
 
     <!-- Tab Navigation -->
@@ -919,11 +923,31 @@
       a.click();
     }
 
+    // ===================== VERSION BADGE =====================
+    async function loadVersion() {
+      try {
+        const res = await fetch('/api/version');
+        const v = await res.json();
+        const dot = document.getElementById('versionDot');
+        const text = document.getElementById('versionText');
+        const isLocal = v.commit === 'local';
+        dot.className = `w-2 h-2 rounded-full inline-block ${isLocal ? 'bg-yellow-500' : 'bg-green-500'}`;
+        const timeStr = v.buildTime ? new Date(v.buildTime).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}) : '';
+        text.textContent = isLocal
+          ? '⚠️ local build'
+          : `✅ ${v.commitShort} · ${v.branch} · deployed ${timeStr}`;
+        document.getElementById('versionBadge').title = `Full commit: ${v.commit}`;
+      } catch(e) {
+        document.getElementById('versionText').textContent = '? version unknown';
+      }
+    }
+
     // ===================== INIT =====================
     document.addEventListener('DOMContentLoaded', () => {
       setDefaultDates();
       loadJobs('intent');
       loadJobs('amazon');
+      loadVersion();
     });
   </script>
 </body>
