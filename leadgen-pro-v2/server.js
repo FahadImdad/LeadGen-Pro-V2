@@ -941,6 +941,19 @@ app.get('/api/jobs', (req, res) => {
   res.json(jobs);
 });
 
+// GET /api/jobs/:jobId/leads — fetch verified leads for display in table
+app.get('/api/jobs/:jobId/leads', (req, res) => {
+  const { jobId } = req.params;
+  const { framework = 'amazon' } = req.query;
+  let leads;
+  if (framework === 'amazon') {
+    leads = db.prepare('SELECT * FROM amazon_leads WHERE job_id = ? AND email_verified = 1 AND is_duplicate = 0 ORDER BY id').all(jobId);
+  } else {
+    leads = db.prepare('SELECT * FROM intent_leads WHERE job_id = ? AND email_verified = 1 AND is_duplicate = 0 ORDER BY id').all(jobId);
+  }
+  res.json(leads);
+});
+
 // GET /api/jobs/:jobId/logs — poll for new logs since a given id
 app.get('/api/jobs/:jobId/logs', (req, res) => {
   const { jobId } = req.params;
@@ -1209,8 +1222,8 @@ app.post('/api/amazon', async (req, res) => {
               return;
             }
 
-            // Only count if ALL 4 checks pass
-            if (emailVerified && isDuplicate === 0 && hasRealWebsite) {
+            // Count if email verified + non-duplicate (website is nice-to-have but not required)
+            if (emailVerified && isDuplicate === 0) {
               verifiedCount++;
               db.prepare('UPDATE scrape_jobs SET verified_count = ?, total_count = ? WHERE id = ?').run(verifiedCount, totalCount, jobId);
               saveLog(jobId, 'success', `✅ VERIFIED LEAD #${verifiedCount}: ${author} | ${email}`);

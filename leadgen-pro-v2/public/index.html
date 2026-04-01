@@ -480,6 +480,10 @@
             </div>
           </div>
           <div class="flex items-center gap-2 shrink-0">
+            <button onclick="${framework === 'amazon' ? `loadAmazonLeadsFromJob(${job.id})` : `loadIntentLeadsFromJob(${job.id})`}"
+                    class="px-3 py-1 bg-blue-600 hover:bg-blue-700 text-sm rounded text-white whitespace-nowrap">
+              👁 View
+            </button>
             <a href="/api/export/${job.id}?framework=${framework}&verifiedOnly=true"
                class="px-3 py-1 bg-green-600 hover:bg-green-700 text-sm rounded text-white whitespace-nowrap">
               📥 Download
@@ -651,18 +655,48 @@
     // Load intent leads from a completed job and render them in the table
     async function loadIntentLeadsFromJob(jobId) {
       try {
-        const res = await fetch(`/api/export/${jobId}?framework=intent&verifiedOnly=true`);
-        // CSV — we'll just show the count; table already shows live-appended rows during poll
-        // For simplicity just reload jobs list
-      } catch(e) {}
+        const res = await fetch(`/api/jobs/${jobId}/leads?framework=intent`);
+        const leads = await res.json();
+        const table = document.getElementById('resultsTable');
+        if (leads.length === 0) { table.innerHTML = `<tr><td colspan="7" class="px-4 py-8 text-center text-gray-500">No verified leads found for this job.</td></tr>`; return; }
+        table.innerHTML = '';
+        allLeads = [];
+        leads.forEach((l, i) => {
+          const lead = {
+            id: i+1, name: l.name||'Unknown', title: l.title||'', description: l.description||'',
+            email: l.email, emailVerified: true, phone: l.phone, whatsapp: l.whatsapp,
+            budget: l.budget, city: l.city||'Remote', source: l.source||'', url: l.url,
+            contactType: 'email'
+          };
+          allLeads.push(lead);
+          renderLead(lead);
+        });
+        updateCounts();
+        document.getElementById('filterBar').classList.remove('hidden');
+      } catch(e) { console.error('loadIntentLeadsFromJob error:', e); }
     }
 
     // Load amazon leads from a completed job into the table
     async function loadAmazonLeadsFromJob(jobId) {
       try {
-        // We already rendered rows in real time via polling + stats
-        // A full reload could be done via export CSV but is not needed for basic UX
-      } catch(e) {}
+        const res = await fetch(`/api/jobs/${jobId}/leads?framework=amazon`);
+        const leads = await res.json();
+        const table = document.getElementById('amazonResultsTable');
+        if (leads.length === 0) { table.innerHTML = `<tr><td colspan="7" class="px-4 py-8 text-center text-gray-500">No verified leads found for this job.</td></tr>`; return; }
+        table.innerHTML = '';
+        amazonLeads = [];
+        leads.forEach((l, i) => {
+          const lead = {
+            id: i+1, author: l.author||'Unknown', bookTitle: l.book_title||'',
+            publishDate: l.publish_date||'', email: l.email, emailVerified: true,
+            emailStatus: l.email_status||'', website: l.website||'', amazonUrl: l.amazon_url, scrapedAt: l.scraped_at
+          };
+          amazonLeads.push(lead);
+          renderAmazonLead(lead);
+        });
+        document.getElementById('amazon-count-email').textContent = leads.length;
+        document.getElementById('amazonExportBar').classList.remove('hidden');
+      } catch(e) { console.error('loadAmazonLeadsFromJob error:', e); }
     }
 
     // ===================== WAKE SERVER ON LOAD =====================
