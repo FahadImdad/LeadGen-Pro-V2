@@ -659,23 +659,47 @@ function isRealAuthorWebsite(url) {
 
 function isBlockedEmail(email) {
   if (email.match(/\.(png|jpg|jpeg|gif|svg|webp|js|css|min\.js|ts)(@|$)/i)) return true;
-  if (/^(user|admin|info|noreply|no-reply|test|example|support|help|contact|sales|hello)@/i.test(email)) return true;
+  // Block generic/role emails — not personal author emails
+  if (/^(user|admin|noreply|no-reply|test|example|support|help|sales|webmaster|postmaster|hostmaster|abuse|privacy|legal|billing|accounts|newsletter|news|media|press|pr|marketing|office|staff|team|service|enquiries|enquiry|info@info|hello@hello)@/i.test(email)) return true;
   if (/\d+\.\d+\.\d+/.test(email)) return true;
   if (email.split('@')[0].length > 40) return true;
   if (BLOCKED_DOMAINS.some(d => email.toLowerCase().includes(d))) return true;
   const domain = email.split('@')[1] || '';
   if (!domain.includes('.')) return true;
+  // Block emails from known generic hosting/platform domains
+  if (/^(gmail\.com|yahoo\.com|hotmail\.com|outlook\.com|icloud\.com|me\.com|mac\.com|aol\.com|protonmail\.com|tutanota\.com)$/.test(domain)) {
+    // Allow gmail etc ONLY if local part contains author name fragment
+    return false; // will be validated against author name in findAuthorContact
+  }
   return false;
 }
 
-// Amazon URLs — use Web Unlocker (not browser) for these pages since they return full HTML
-const AMAZON_SEARCH_URLS = [
-  'https://www.amazon.com/gp/new-releases/books/ref=zg_bsnr_pg_1?pg=1',
-  'https://www.amazon.com/gp/new-releases/books/ref=zg_bsnr_pg_2?pg=2',
-  'https://www.amazon.com/gp/new-releases/books/ref=zg_bsnr_pg_3?pg=3',
-  'https://www.amazon.com/gp/new-releases/books/ref=zg_bsnr_pg_4?pg=4',
-  'https://www.amazon.com/gp/new-releases/books/ref=zg_bsnr_pg_5?pg=5',
-  // Best sellers by category
+// Check if email is likely the author's personal email (contains their name)
+function isLikelyAuthorEmail(email, authorName) {
+  if (!email || !authorName) return false;
+  const local = email.split('@')[0].toLowerCase();
+  const domain = (email.split('@')[1] || '').toLowerCase();
+  const nameParts = authorName.toLowerCase().replace(/[^a-z\s]/g, '').split(/\s+/).filter(p => p.length > 2);
+
+  // If email domain contains author name → strong signal
+  const domainHasName = nameParts.some(part => domain.includes(part));
+  if (domainHasName) return true;
+
+  // If local part contains author's first or last name → good signal
+  const localHasName = nameParts.some(part => local.includes(part));
+  if (localHasName) return true;
+
+  // If it's a gmail/yahoo etc, require name in local part
+  const isGenericDomain = /^(gmail|yahoo|hotmail|outlook|icloud|me|mac|aol|protonmail)\./.test(domain);
+  if (isGenericDomain && !localHasName) return false;
+
+  // For custom domains, trust it if website was real author site
+  return true;
+}
+
+// Amazon base URLs — each supports pagination via ?pg=N (up to 5 pages = 250 books per category)
+const AMAZON_BASE_URLS = [
+  'https://www.amazon.com/gp/new-releases/books',           // All new releases
   'https://www.amazon.com/best-sellers-books-Amazon/zgbs/books/2635',      // Business
   'https://www.amazon.com/best-sellers-books-Amazon/zgbs/books/4736',      // Self Help
   'https://www.amazon.com/best-sellers-books-Amazon/zgbs/books/6',         // Health
@@ -686,12 +710,19 @@ const AMAZON_SEARCH_URLS = [
   'https://www.amazon.com/best-sellers-books-Amazon/zgbs/books/9',         // History
   'https://www.amazon.com/best-sellers-books-Amazon/zgbs/books/11232',     // Politics
   'https://www.amazon.com/best-sellers-books-Amazon/zgbs/books/2642',      // Travel
+  'https://www.amazon.com/best-sellers-books-Amazon/zgbs/books/4677',      // Education
+  'https://www.amazon.com/best-sellers-books-Amazon/zgbs/books/3',         // Children
+  'https://www.amazon.com/best-sellers-books-Amazon/zgbs/books/4',         // Computers
+  'https://www.amazon.com/best-sellers-books-Amazon/zgbs/books/173507',    // Arts & Photography
 ];
+const MAX_PAGES_PER_URL = 5; // Amazon new-releases/best-sellers support up to 5 pages
 
 function buildAmazonUrl(dateFrom, dateTo, page = 1) { return null; }
 
 function getAmazonUrl(urlIndex, page) {
-  return AMAZON_SEARCH_URLS[urlIndex % AMAZON_SEARCH_URLS.length];
+  const base = AMAZON_BASE_URLS[urlIndex % AMAZON_BASE_URLS.length];
+  const pg = Math.max(1, Math.min(page, MAX_PAGES_PER_URL));
+  return `${base}?pg=${pg}`;
 }
 
 // Parse Amazon new-releases / best-seller HTML (Web Unlocker) into book objects
@@ -802,8 +833,14 @@ async function findAuthorContact(authorName, bookTitle, saveLog) {
   const nameSlug = authorName.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
   const nameUnderscore = authorName.toLowerCase().replace(/\s+/g, '_');
 
-  function extractEmails(html) {
-    return (html.match(emailRegex) || []).filter(e => !isBlockedEmail(e));
+  function extractEmails(html, validateAgainstAuthor = false) {
+    const raw = (html.match(emailRegex) || []).filter(e => !isBlockedEmail(e));
+    if (validateAgainstAuthor) {
+      // Prefer emails that contain author name
+      const authorEmails = raw.filter(e => isLikelyAuthorEmail(e, authorName));
+      return authorEmails.length > 0 ? authorEmails : raw;
+    }
+    return raw;
   }
 
   function extractRealWebsites(html) {
@@ -815,11 +852,11 @@ async function findAuthorContact(authorName, bookTitle, saveLog) {
     return [...new Set(candidates)].sort((a,b) => a.length - b.length);
   }
 
-  async function fetchEmails(url) {
+  async function fetchEmails(url, validateAuthor = false) {
     try {
       const html = await scrapeWithBrightData(url);
       if (!html) return { email: null, website: null, html: null };
-      const emails = extractEmails(html);
+      const emails = extractEmails(html, validateAuthor);
       const sites = extractRealWebsites(html);
       return { email: emails[0] || null, website: sites[0] || null, html };
     } catch(e) { return { email: null, website: null, html: null }; }
@@ -837,31 +874,30 @@ async function findAuthorContact(authorName, bookTitle, saveLog) {
     igR, reedsyR, grR,
     yahooR, pressR
   ] = await Promise.all([
-    // Google x3
-    fetchEmails(`https://www.google.com/search?q=${encodeURIComponent(`"${authorName}" author email contact`)}&num=10`),
-    fetchEmails(`https://www.google.com/search?q=${encodeURIComponent(`"${authorName}" author official website`)}&num=10`),
-    fetchEmails(`https://www.google.com/search?q=${encodeURIComponent(`"${authorName}" "${bookTitle}" author`)}&num=10`),
-    // Google direct email — finds publicly posted emails anywhere online
-    fetchEmails(`https://www.google.com/search?q=${encodeURIComponent(`"${authorName}" "@gmail.com" OR "@yahoo.com" OR "@hotmail.com" OR "@outlook.com"`)}&num=10`),
+    // Google x3 — validate email against author name
+    fetchEmails(`https://www.google.com/search?q=${encodeURIComponent(`"${authorName}" author email contact`)}&num=10`, true),
+    fetchEmails(`https://www.google.com/search?q=${encodeURIComponent(`"${authorName}" author official website`)}&num=10`, true),
+    fetchEmails(`https://www.google.com/search?q=${encodeURIComponent(`"${authorName}" "${bookTitle}" author`)}&num=10`, true),
+    // Google direct email
+    fetchEmails(`https://www.google.com/search?q=${encodeURIComponent(`"${authorName}" "@gmail.com" OR "@yahoo.com" OR "@hotmail.com" OR "@outlook.com"`)}&num=10`, true),
     // Bing x2
-    fetchEmails(`https://www.bing.com/search?q=${encodeURIComponent(`"${authorName}" author email website contact`)}&count=10`),
-    fetchEmails(`https://www.bing.com/search?q=${encodeURIComponent(`"${authorName}" "${bookTitle}" author email`)}&count=10`),
+    fetchEmails(`https://www.bing.com/search?q=${encodeURIComponent(`"${authorName}" author email website contact`)}&count=10`, true),
+    fetchEmails(`https://www.bing.com/search?q=${encodeURIComponent(`"${authorName}" "${bookTitle}" author email`)}&count=10`, true),
     // DuckDuckGo
-    fetchEmails(`https://html.duckduckgo.com/html/?q=${encodeURIComponent(`"${authorName}" author email contact`)}`),
-    // Amazon BOOK page — "About the Author" section has website/bio
-    fetchEmails(`https://www.amazon.com/s?k=${encodeURIComponent(authorName + ' ' + bookTitle)}&i=stripbooks`),
-    // Amazon author stores page
-    fetchEmails(`https://www.amazon.com/stores/author/${nameSlug}`),
+    fetchEmails(`https://html.duckduckgo.com/html/?q=${encodeURIComponent(`"${authorName}" author email contact`)}`, true),
+    // Amazon pages
+    fetchEmails(`https://www.amazon.com/s?k=${encodeURIComponent(authorName + ' ' + bookTitle)}&i=stripbooks`, true),
+    fetchEmails(`https://www.amazon.com/stores/author/${nameSlug}`, true),
     // Instagram
-    fetchEmails(`https://www.instagram.com/${firstName}${lastName}.author/`),
+    fetchEmails(`https://www.instagram.com/${firstName}${lastName}.author/`, true),
     // Reedsy
-    fetchEmails(`https://reedsy.com/discovery/user/${nameSlug}`),
+    fetchEmails(`https://reedsy.com/discovery/user/${nameSlug}`, true),
     // Goodreads
-    fetchEmails(`https://www.goodreads.com/search?q=${encodedName}&search_type=authors`),
-    // Yahoo search
-    fetchEmails(`https://search.yahoo.com/search?p=${encodeURIComponent(`"${authorName}" author email website`)}`),
-    // Search for press kits / media pages
-    fetchEmails(`https://www.google.com/search?q=${encodeURIComponent(`"${authorName}" author "press" OR "media" OR "contact" OR "interview"`)}&num=10`),
+    fetchEmails(`https://www.goodreads.com/search?q=${encodedName}&search_type=authors`, true),
+    // Yahoo
+    fetchEmails(`https://search.yahoo.com/search?p=${encodeURIComponent(`"${authorName}" author email website`)}`, true),
+    // Press/media
+    fetchEmails(`https://www.google.com/search?q=${encodeURIComponent(`"${authorName}" author "press" OR "media" OR "contact"`)}&num=10`, true),
   ]);
 
   // Collect any direct emails found across all sources
@@ -938,7 +974,7 @@ async function findAuthorContact(authorName, bookTitle, saveLog) {
     site,
   ]).slice(0, 10);
 
-  const pageResults = await Promise.all(contactPages.map(url => fetchEmails(url)));
+  const pageResults = await Promise.all(contactPages.map(url => fetchEmails(url, true)));
   const siteEmail = pageResults.find(r => r?.email)?.email || null;
   const foundWebsite = uniqueWebsites[0];
 
@@ -1138,11 +1174,12 @@ app.post('/api/amazon', async (req, res) => {
       saveLog(jobId, 'info', `🚀 Starting Amazon Author Lead Gen (job #${jobId}, target: ${targetLeads} verified leads)...`);
 
       let page_num = 1;
-      const maxPages = 20; // 20 pages per category URL
+      const maxPages = MAX_PAGES_PER_URL;
       let keepGoing = true;
       let consecutiveEmpty = 0;
       let urlIndex = 0;
       const seenAsinsThisRun = new Set();
+      saveLog(jobId, 'info', `📚 Total categories: ${AMAZON_BASE_URLS.length} × ${MAX_PAGES_PER_URL} pages = ${AMAZON_BASE_URLS.length * MAX_PAGES_PER_URL * 50} max books`);
 
       try {
         saveLog(jobId, 'info', `🚀 Amazon scraper using Web Unlocker (no browser needed)...`);
