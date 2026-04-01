@@ -706,46 +706,73 @@ app.post('/api/amazon', async (req, res) => {
   // Parse Amazon search results HTML (server-rendered)
   function parseAmazonSearchHtml(html) {
     const books = [];
-    // Extract data-asin blocks
-    const itemRegex = /data-asin="([A-Z0-9]{10})"[^>]*data-component-type="s-search-result"[\s\S]*?(?=data-asin="[A-Z0-9]{10}"|$)/g;
-    // Simpler approach: find all ASINs and extract title/author near them
-    const asinMatches = html.matchAll(/data-asin="([A-Z0-9]{10})"/g);
     const seenAsins = new Set();
 
-    for (const match of asinMatches) {
-      const asin = match[1];
-      if (seenAsins.has(asin) || asin === '0000000000') continue;
+    // Strategy 1: data-asin attribute (HTML) - case insensitive, any alphanumeric
+    const asinRegex = /data-asin="([a-zA-Z0-9]{8,12})"/gi;
+    let match;
+
+    while ((match = asinRegex.exec(html)) !== null) {
+      const asin = match[1].toUpperCase();
+      if (seenAsins.has(asin) || asin === '0000000000' || /^0+$/.test(asin)) continue;
       seenAsins.add(asin);
 
-      // Get surrounding context (2000 chars after the asin attribute)
-      const startIdx = match.index;
-      const chunk = html.substring(startIdx, startIdx + 3000);
+      // Get surrounding context ~4000 chars
+      const startIdx = Math.max(0, match.index - 100);
+      const chunk = html.substring(startIdx, startIdx + 4000);
 
-      // Extract title from h2
-      const titleMatch = chunk.match(/<h2[^>]*>[\s\S]*?<a[^>]*>[\s\S]*?<span[^>]*>([\s\S]*?)<\/span>/);
-      let title = titleMatch ? titleMatch[1].replace(/<[^>]+>/g, '').trim() : '';
-
-      // Fallback: a-size-medium or a-size-base-plus span
-      if (!title) {
-        const t2 = chunk.match(/class="[^"]*a-size-(?:medium|base-plus)[^"]*"[^>]*>([\s\S]*?)<\/span>/);
-        title = t2 ? t2[1].replace(/<[^>]+>/g, '').trim() : '';
+      // Extract title — multiple patterns
+      let title = '';
+      const titlePatterns = [
+        /data-cy="title-recipe"[^>]*>[\s\S]*?<span[^>]*>([\s\S]*?)<\/span>/i,
+        /<h2[^>]*>[\s\S]*?<span[^>]*>([^<]{5,200})<\/span>/,
+        /class="[^"]*a-size-(?:medium|base-plus)[^"]*a-color-base[^"]*a-text-normal[^"]*"[^>]*>([^<]{5,200})<\/span>/,
+        /class="[^"]*a-size-medium[^"]*"[^>]*>([^<]{5,200})<\/span>/,
+        /class="[^"]*a-size-base-plus[^"]*"[^>]*>([^<]{5,200})<\/span>/,
+        /"title":"([^"]{5,200})"/,
+      ];
+      for (const pat of titlePatterns) {
+        const m = chunk.match(pat);
+        if (m) { title = m[1].replace(/<[^>]+>/g, '').trim(); if (title.length > 3) break; }
       }
-
       if (!title || title.length < 3) continue;
 
       // Extract author
       let author = '';
-      const authorMatch = chunk.match(/by\s+<a[^>]*>([^<]+)<\/a>/i) ||
-                          chunk.match(/class="[^"]*a-color-secondary[^"]*"[^>]*>[\s\S]*?by\s+([\w\s.]+?)[\s<]/i);
-      if (authorMatch) author = authorMatch[1].trim();
+      const authorPatterns = [
+        /by\s+<a[^>]*class="[^"]*a-link-normal[^"]*"[^>]*>([^<]{2,100})<\/a>/i,
+        /class="[^"]*s-line-clamp[^"]*"[^>]*>[\s\S]*?by\s+([\w\s.,'-]{2,60})(?:<|$)/i,
+        /"authorName":"([^"]{2,100})"/,
+        /class="[^"]*a-color-secondary[^"]*"[^>]*>\s*([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)/,
+      ];
+      for (const pat of authorPatterns) {
+        const m = chunk.match(pat);
+        if (m) { author = m[1].replace(/<[^>]+>/g, '').trim(); if (author.length > 1) break; }
+      }
 
       // Extract publish date
       let publishDate = '';
-      const dateMatch = chunk.match(/(\w+ \d{1,2},?\s*\d{4})/);
+      const dateMatch = chunk.match(/(\w+\s+\d{1,2},?\s*\d{4})/);
       if (dateMatch) publishDate = dateMatch[1];
 
-      books.push({ asin, title, author, publishDate, amazonUrl: `https://www.amazon.com/dp/${asin}` });
+      books.push({ asin, title, author: author || 'Unknown', publishDate, amazonUrl: `https://www.amazon.com/dp/${asin}` });
     }
+
+    // Strategy 2: try JSON embedded data if HTML parsing got 0
+    if (books.length === 0) {
+      const jsonMatch = html.match(/"asin"\s*:\s*"([a-zA-Z0-9]{8,12})"/g);
+      if (jsonMatch) {
+        sendEvent('log', { level: 'info', message: `🔍 Trying JSON extraction — found ${jsonMatch.length} ASIN candidates` });
+        for (const m of jsonMatch) {
+          const asin = m.match(/"([a-zA-Z0-9]{8,12})"/)[1].toUpperCase();
+          if (!seenAsins.has(asin) && !/^0+$/.test(asin)) {
+            seenAsins.add(asin);
+            books.push({ asin, title: `Book ${asin}`, author: 'Unknown', publishDate: '', amazonUrl: `https://www.amazon.com/dp/${asin}` });
+          }
+        }
+      }
+    }
+
     return books;
   }
 
