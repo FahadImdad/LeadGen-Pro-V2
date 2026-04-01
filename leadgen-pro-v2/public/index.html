@@ -57,7 +57,7 @@
                 <span class="text-gray-600">|</span>
                 <button onclick="clearAllRegions()" class="text-gray-400 hover:text-gray-300">Clear</button>
                 <span class="text-gray-600">|</span>
-                <button onclick="toggleRegionPanel()" class="text-yellow-400 hover:text-yellow-300" id="regionToggleBtn">▼ Expand</button>
+                <button onclick="toggleRegionPanel()" class="text-yellow-400 hover:text-yellow-300" id="regionToggleBtn">▲ Collapse</button>
               </div>
             </div>
             <!-- Selected tags display -->
@@ -65,7 +65,7 @@
               <span class="text-xs text-gray-400 italic" id="regionTagsPlaceholder">🌍 All regions selected</span>
             </div>
             <!-- Collapsible region panel -->
-            <div id="regionPanel" class="hidden bg-gray-900 border border-gray-700 rounded p-3 max-h-48 overflow-y-auto">
+            <div id="regionPanel" class="bg-gray-900 border border-gray-700 rounded p-3 max-h-48 overflow-y-auto">
               <div class="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
                 <div class="col-span-2 text-gray-500 font-bold mb-1">🇺🇸 USA</div>
                 <label class="flex items-center gap-1 cursor-pointer"><input type="checkbox" class="region-cb" value="sfbay" checked> San Francisco</label>
