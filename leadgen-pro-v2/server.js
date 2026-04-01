@@ -754,6 +754,8 @@ async function findAuthorContact(authorName, bookTitle, saveLog) {
   const emailRegex = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g;
   const firstName = authorName.split(' ')[0].toLowerCase();
   const lastName = authorName.split(' ').slice(-1)[0].toLowerCase();
+  const nameSlug = authorName.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
+  const nameUnderscore = authorName.toLowerCase().replace(/\s+/g, '_');
 
   function extractEmails(html) {
     return (html.match(emailRegex) || []).filter(e => !isBlockedEmail(e));
@@ -778,39 +780,62 @@ async function findAuthorContact(authorName, bookTitle, saveLog) {
     } catch(e) { return { email: null, website: null, html: null }; }
   }
 
-  // ── PHASE 1: Quick parallel scan of all discovery sources ─────────────
-  saveLog('info', `⚡ Parallel scanning 6 sources for ${authorName}...`);
+  // ── PHASE 1: Parallel scan — Google, Bing, DuckDuckGo, direct email search,
+  //             Amazon author page, Instagram, Reedsy, Goodreads ─────────
+  saveLog('info', `⚡ Parallel scanning 11 sources for ${authorName}...`);
 
-  const [googleR1, googleR2, googleR3, igR, reedsyR, grR] = await Promise.all([
+  const encodedName = encodeURIComponent(authorName);
+  const encodedTitle = encodeURIComponent(bookTitle);
+
+  const [
+    googleR1, googleR2, googleR3, googleDirectEmail,
+    bingR1, bingR2,
+    ddgR,
+    amazonAuthorR,
+    igR, reedsyR, grR
+  ] = await Promise.all([
+    // Google x3
     fetchEmails(`https://www.google.com/search?q=${encodeURIComponent(`"${authorName}" author email contact`)}&num=10`),
     fetchEmails(`https://www.google.com/search?q=${encodeURIComponent(`"${authorName}" author official website`)}&num=10`),
     fetchEmails(`https://www.google.com/search?q=${encodeURIComponent(`"${authorName}" "${bookTitle}" author site`)}&num=5`),
+    // Google direct email search — finds publicly posted emails
+    fetchEmails(`https://www.google.com/search?q=${encodeURIComponent(`"${authorName}" author "@gmail.com" OR "@yahoo.com" OR "@hotmail.com" OR "@outlook.com" OR "@icloud.com"`)}&num=10`),
+    // Bing x2 (less aggressive blocking than Google)
+    fetchEmails(`https://www.bing.com/search?q=${encodeURIComponent(`"${authorName}" author email website`)}&count=10`),
+    fetchEmails(`https://www.bing.com/search?q=${encodeURIComponent(`"${authorName}" "${bookTitle}" contact email`)}&count=10`),
+    // DuckDuckGo (most scraper-friendly)
+    fetchEmails(`https://html.duckduckgo.com/html/?q=${encodeURIComponent(`"${authorName}" author email contact site`)}`),
+    // Amazon author page directly
+    fetchEmails(`https://www.amazon.com/stores/author/${nameSlug}`),
+    // Instagram
     fetchEmails(`https://www.instagram.com/${firstName}${lastName}.author/`),
-    fetchEmails(`https://reedsy.com/discovery/user/${authorName.toLowerCase().replace(/\s+/g,'-')}`),
-    fetchEmails(`https://www.goodreads.com/search?q=${encodeURIComponent(authorName)}&search_type=authors`),
+    // Reedsy
+    fetchEmails(`https://reedsy.com/discovery/user/${nameSlug}`),
+    // Goodreads
+    fetchEmails(`https://www.goodreads.com/search?q=${encodedName}&search_type=authors`),
   ]);
 
-  // Collect any direct emails found
-  const directEmails = [googleR1, googleR2, googleR3, igR, reedsyR].map(r => r?.email).filter(Boolean);
+  // Collect any direct emails found across all sources
+  const allResults = [googleR1, googleR2, googleR3, googleDirectEmail, bingR1, bingR2, ddgR, amazonAuthorR, igR, reedsyR];
+  const directEmails = allResults.map(r => r?.email).filter(Boolean);
   if (directEmails.length > 0) {
     saveLog('success', `📧 Direct email found: ${directEmails[0]}`);
-    return { email: directEmails[0], website: [googleR1,googleR2].find(r=>r?.website)?.website || null };
+    return { email: directEmails[0], website: allResults.find(r=>r?.website)?.website || null };
   }
 
-  // Collect all websites found across sources
-  const allWebsites = [googleR1, googleR2, googleR3, reedsyR, grR]
+  // Collect all websites found across all sources
+  const allWebsites = [...allResults, grR]
     .flatMap(r => [r?.website, ...(r?.html ? extractRealWebsites(r.html) : [])])
     .filter(Boolean)
     .filter(isRealAuthorWebsite);
-  const uniqueWebsites = [...new Set(allWebsites)].slice(0, 5);
+  const uniqueWebsites = [...new Set(allWebsites)].slice(0, 6);
 
   if (uniqueWebsites.length === 0) {
-    // No websites found at all — skip this author
     saveLog('info', `⏩ No online presence found for ${authorName} — skipping`);
     return { email: null, website: null };
   }
 
-  // ── PHASE 2: Parallel visit of all found websites (contact pages) ─────
+  // ── PHASE 2: Parallel visit of all found websites ─────────────────────
   saveLog('info', `🌐 Visiting ${uniqueWebsites.length} websites in parallel...`);
 
   const contactPages = uniqueWebsites.flatMap(site => [
@@ -818,7 +843,7 @@ async function findAuthorContact(authorName, bookTitle, saveLog) {
     site.replace(/\/$/, '') + '/contact-me',
     site.replace(/\/$/, '') + '/about',
     site,
-  ]).slice(0, 8); // max 8 pages
+  ]).slice(0, 10);
 
   const pageResults = await Promise.all(contactPages.map(url => fetchEmails(url)));
   const siteEmail = pageResults.find(r => r?.email)?.email || null;
@@ -829,9 +854,9 @@ async function findAuthorContact(authorName, bookTitle, saveLog) {
     return { email: siteEmail, website: foundWebsite };
   }
 
-  // ── PHASE 3: Hunter.io (finder + domain search) in parallel ───────────
+  // ── PHASE 3: Hunter.io finder + domain search in parallel ─────────────
   if (foundWebsite && HUNTER_API_KEY) {
-    saveLog('hunter', `🎯 Hunter: email finder + domain search for ${authorName}...`);
+    saveLog('hunter', `🎯 Hunter: finder + domain search for ${authorName}...`);
     const domain = new URL(foundWebsite).hostname.replace(/^www\./, '');
 
     const [finderRes, domainEmail] = await Promise.all([
