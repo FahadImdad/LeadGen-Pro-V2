@@ -346,8 +346,14 @@ async function scrapeReddit(keyword, sendEvent, dateFrom, dateTo) {
 
       sendEvent('log', { level: 'brightdata', message: `🌐 Fetching r/${sub.name}...` });
 
+      // Delay between Reddit requests to avoid 429
+      await new Promise(r => setTimeout(r, 1500));
+
       const response = await axios.get(url, {
-        headers: { 'User-Agent': 'LeadGen/2.0' },
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (compatible; LeadGenBot/2.0)',
+          'Accept': 'application/json'
+        },
         timeout: 30000
       });
 
@@ -803,6 +809,19 @@ app.post('/api/amazon', async (req, res) => {
       sendEvent('log', { level: 'info', message: `📄 Scraping Amazon page ${page_num}...` });
 
       let pageBooks = [];
+
+      // Reconnect browser if dropped
+      if (!amazonBrowser || !amazonBrowser.isConnected()) {
+        sendEvent('log', { level: 'brightdata', message: `🔄 Reconnecting browser...` });
+        try {
+          if (amazonBrowser) await amazonBrowser.close().catch(() => {});
+          amazonBrowser = await puppeteer.connect({ browserWSEndpoint: BROWSER_WS });
+        } catch (connErr) {
+          sendEvent('log', { level: 'error', message: `❌ Reconnect failed: ${connErr.message}` });
+          break;
+        }
+      }
+
       const amzPage = await amazonBrowser.newPage();
       amzPage.setDefaultNavigationTimeout(90000);
 
@@ -844,6 +863,19 @@ app.post('/api/amazon', async (req, res) => {
       } catch (pageError) {
         await amzPage.close().catch(() => {});
         sendEvent('log', { level: 'error', message: `❌ Page ${page_num} error: ${pageError.message}` });
+        // On network error, try reconnecting before giving up
+        if (pageError.message.includes('network') || pageError.message.includes('disconnect')) {
+          sendEvent('log', { level: 'brightdata', message: `🔄 Network error — reconnecting...` });
+          try {
+            await amazonBrowser.close().catch(() => {});
+            amazonBrowser = await puppeteer.connect({ browserWSEndpoint: BROWSER_WS });
+            sendEvent('log', { level: 'success', message: `✅ Reconnected — retrying page ${page_num}` });
+            continue; // retry same page
+          } catch (e) {
+            sendEvent('log', { level: 'error', message: `❌ Reconnect failed: ${e.message}` });
+            break;
+          }
+        }
         consecutiveEmpty++;
         if (consecutiveEmpty >= 3) break;
         page_num++;
@@ -1143,9 +1175,19 @@ app.post('/api/search', async (req, res) => {
       sendEvent('log', { level: 'error', message: `❌ Could not connect browser: ${e.message}` });
     }
 
-    // Helper: fetch a single CL post using shared browser
+    // Helper: fetch a single CL post using shared browser (with reconnect)
     async function fetchCLPost(url) {
-      if (!clBrowser) return null;
+      // Reconnect if dropped
+      if (!clBrowser || !clBrowser.isConnected()) {
+        try {
+          if (clBrowser) await clBrowser.close().catch(() => {});
+          clBrowser = await puppeteer.connect({ browserWSEndpoint: BROWSER_WS });
+          sendEvent('log', { level: 'brightdata', message: `🔄 CL browser reconnected` });
+        } catch (e) {
+          sendEvent('log', { level: 'error', message: `❌ CL reconnect failed: ${e.message}` });
+          return null;
+        }
+      }
       const page = await clBrowser.newPage();
       page.setDefaultNavigationTimeout(30000);
       try {
