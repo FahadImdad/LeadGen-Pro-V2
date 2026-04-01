@@ -724,12 +724,116 @@ async function findAuthorContact(authorName, bookTitle, saveLog) {
     if (html) {
       const emails = extractEmails(html);
       if (emails.length > 0) return { email: emails[0], website: foundWebsite };
-      // Also extract their website from Reedsy profile
       const websiteMatch = html.match(/href="(https?:\/\/(?!reedsy)[^"]+)"/);
       if (websiteMatch && isRealAuthorWebsite(websiteMatch[1]) && !foundWebsite) {
         foundWebsite = websiteMatch[1];
         const result = await tryFetchEmail(foundWebsite, 'author website via Reedsy');
         if (result?.email) return { email: result.email, website: foundWebsite };
+      }
+    }
+  } catch (e) { /* continue */ }
+
+  // ── SOURCE 6: Goodreads author profile ───────────────────────────────
+  try {
+    const grSearchUrl = `https://www.goodreads.com/search?utf8=✓&query=${encodeURIComponent(authorName)}&search_type=authors`;
+    saveLog('info', `🔍 Checking Goodreads...`);
+    const grHtml = await scrapeWithBrightData(grSearchUrl);
+    if (grHtml) {
+      // Extract author profile link
+      const authorLinkMatch = grHtml.match(/href="(\/author\/show\/[^"]+)"/);
+      if (authorLinkMatch) {
+        const profileUrl = `https://www.goodreads.com${authorLinkMatch[1]}`;
+        const profileHtml = await scrapeWithBrightData(profileUrl);
+        if (profileHtml) {
+          // Extract website from profile
+          const websiteMatches = extractRealWebsites(profileHtml);
+          for (const site of websiteMatches.slice(0, 2)) {
+            if (!foundWebsite) foundWebsite = site;
+            const pages = [
+              site.replace(/\/$/, '') + '/contact',
+              site.replace(/\/$/, '') + '/contact-me',
+              site,
+            ];
+            for (const pageUrl of pages) {
+              const result = await tryFetchEmail(pageUrl, `${new URL(site).hostname} via Goodreads`);
+              if (result?.email) return { email: result.email, website: site };
+            }
+          }
+        }
+      }
+    }
+  } catch (e) { /* continue */ }
+
+  // ── SOURCE 7: Twitter/X bio ───────────────────────────────────────────
+  try {
+    const twitterHandles = [
+      `${firstName.toLowerCase()}${lastName.toLowerCase()}`,
+      `${firstName.toLowerCase()}_${lastName.toLowerCase()}`,
+      `${firstName.toLowerCase()}${lastName.toLowerCase()}author`,
+      `author${firstName.toLowerCase()}${lastName.toLowerCase()}`,
+    ];
+    saveLog('info', `🔍 Checking Twitter/X...`);
+    for (const handle of twitterHandles) {
+      const twitterUrl = `https://twitter.com/${handle}`;
+      const result = await tryFetchEmail(twitterUrl, `Twitter @${handle}`);
+      if (result?.email) return { email: result.email, website: foundWebsite };
+      // Check if bio has website link
+      if (result?.html) {
+        const sites = extractRealWebsites(result.html);
+        for (const site of sites.slice(0, 2)) {
+          if (!foundWebsite) foundWebsite = site;
+          const r = await tryFetchEmail(site, `website via Twitter`);
+          if (r?.email) return { email: r.email, website: site };
+        }
+        break; // found the profile page, stop trying handles
+      }
+    }
+  } catch (e) { /* continue */ }
+
+  // ── SOURCE 8: Facebook author page ───────────────────────────────────
+  try {
+    saveLog('info', `🔍 Checking Facebook...`);
+    const fbSearchUrl = `https://www.facebook.com/search/people/?q=${encodeURIComponent(authorName + ' author')}`;
+    const fbHtml = await scrapeWithBrightData(fbSearchUrl);
+    if (fbHtml) {
+      const emails = extractEmails(fbHtml);
+      if (emails.length > 0) return { email: emails[0], website: foundWebsite };
+    }
+  } catch (e) { /* continue */ }
+
+  // ── SOURCE 9: Hunter.io email finder (name + domain) ─────────────────
+  // If we have a website but still no email, use Hunter's email finder API
+  if (foundWebsite && HUNTER_API_KEY) {
+    try {
+      const domain = new URL(foundWebsite).hostname.replace(/^www\./, '');
+      saveLog('hunter', `🔍 Hunter email finder: ${firstName} ${lastName} @ ${domain}`);
+      const response = await axios.get(
+        `https://api.hunter.io/v2/email-finder?domain=${encodeURIComponent(domain)}&first_name=${encodeURIComponent(firstName)}&last_name=${encodeURIComponent(lastName)}&api_key=${HUNTER_API_KEY}`,
+        { timeout: 10000 }
+      );
+      const finderEmail = response.data?.data?.email;
+      const confidence = response.data?.data?.score || 0;
+      if (finderEmail && confidence >= 50) {
+        saveLog('success', `📧 Hunter finder: ${finderEmail} (confidence: ${confidence}%)`);
+        return { email: finderEmail, website: foundWebsite };
+      }
+    } catch (e) { /* continue */ }
+  }
+
+  // ── SOURCE 10: LinkedIn ───────────────────────────────────────────────
+  try {
+    const liUrl = `https://www.linkedin.com/in/${firstName.toLowerCase()}-${lastName.toLowerCase()}-author/`;
+    saveLog('info', `🔍 Checking LinkedIn...`);
+    const result = await tryFetchEmail(liUrl, 'LinkedIn');
+    if (result?.email) return { email: result.email, website: foundWebsite };
+    // Also try Google search for LinkedIn profile
+    const liSearchUrl = `https://www.google.com/search?q=site:linkedin.com/in "${encodeURIComponent(authorName)}" author`;
+    const liSearchHtml = await scrapeWithBrightData(liSearchUrl);
+    if (liSearchHtml) {
+      const liLinkMatch = liSearchHtml.match(/href="(https:\/\/www\.linkedin\.com\/in\/[^"]+)"/);
+      if (liLinkMatch) {
+        const liResult = await tryFetchEmail(liLinkMatch[1], 'LinkedIn profile');
+        if (liResult?.email) return { email: liResult.email, website: foundWebsite };
       }
     }
   } catch (e) { /* continue */ }
