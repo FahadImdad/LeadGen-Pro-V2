@@ -697,148 +697,106 @@ app.post('/api/amazon', async (req, res) => {
   let verifiedCount = 0;
   let totalCount = 0;
 
-  // Step 1: Stream Amazon books page by page using Web Unlocker (server-side rendered HTML)
+  // Step 1: Stream Amazon books page by page using Scraping Browser
+  // (Web Unlocker returns JS-shell with empty data-asin — need real JS execution)
   let page_num = 1;
   const maxPages = 50;
   let keepGoing = true;
   let consecutiveEmpty = 0;
-
-  // Parse Amazon search results HTML (server-rendered)
-  function parseAmazonSearchHtml(html) {
-    const books = [];
-    const seenAsins = new Set();
-
-    // Strategy 1: data-asin attribute (HTML) - case insensitive, any alphanumeric
-    const asinRegex = /data-asin="([a-zA-Z0-9]{8,12})"/gi;
-    let match;
-
-    while ((match = asinRegex.exec(html)) !== null) {
-      const asin = match[1].toUpperCase();
-      if (seenAsins.has(asin) || asin === '0000000000' || /^0+$/.test(asin)) continue;
-      seenAsins.add(asin);
-
-      // Get surrounding context ~4000 chars
-      const startIdx = Math.max(0, match.index - 100);
-      const chunk = html.substring(startIdx, startIdx + 4000);
-
-      // Extract title — multiple patterns
-      let title = '';
-      const titlePatterns = [
-        /data-cy="title-recipe"[^>]*>[\s\S]*?<span[^>]*>([\s\S]*?)<\/span>/i,
-        /<h2[^>]*>[\s\S]*?<span[^>]*>([^<]{5,200})<\/span>/,
-        /class="[^"]*a-size-(?:medium|base-plus)[^"]*a-color-base[^"]*a-text-normal[^"]*"[^>]*>([^<]{5,200})<\/span>/,
-        /class="[^"]*a-size-medium[^"]*"[^>]*>([^<]{5,200})<\/span>/,
-        /class="[^"]*a-size-base-plus[^"]*"[^>]*>([^<]{5,200})<\/span>/,
-        /"title":"([^"]{5,200})"/,
-      ];
-      for (const pat of titlePatterns) {
-        const m = chunk.match(pat);
-        if (m) { title = m[1].replace(/<[^>]+>/g, '').trim(); if (title.length > 3) break; }
-      }
-      if (!title || title.length < 3) continue;
-
-      // Extract author
-      let author = '';
-      const authorPatterns = [
-        /by\s+<a[^>]*class="[^"]*a-link-normal[^"]*"[^>]*>([^<]{2,100})<\/a>/i,
-        /class="[^"]*s-line-clamp[^"]*"[^>]*>[\s\S]*?by\s+([\w\s.,'-]{2,60})(?:<|$)/i,
-        /"authorName":"([^"]{2,100})"/,
-        /class="[^"]*a-color-secondary[^"]*"[^>]*>\s*([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)/,
-      ];
-      for (const pat of authorPatterns) {
-        const m = chunk.match(pat);
-        if (m) { author = m[1].replace(/<[^>]+>/g, '').trim(); if (author.length > 1) break; }
-      }
-
-      // Extract publish date
-      let publishDate = '';
-      const dateMatch = chunk.match(/(\w+\s+\d{1,2},?\s*\d{4})/);
-      if (dateMatch) publishDate = dateMatch[1];
-
-      books.push({ asin, title, author: author || 'Unknown', publishDate, amazonUrl: `https://www.amazon.com/dp/${asin}` });
-    }
-
-    // Strategy 2: try JSON embedded data if HTML parsing got 0
-    if (books.length === 0) {
-      const jsonMatch = html.match(/"asin"\s*:\s*"([a-zA-Z0-9]{8,12})"/g);
-      if (jsonMatch) {
-        sendEvent('log', { level: 'info', message: `🔍 Trying JSON extraction — found ${jsonMatch.length} ASIN candidates` });
-        for (const m of jsonMatch) {
-          const asin = m.match(/"([a-zA-Z0-9]{8,12})"/)[1].toUpperCase();
-          if (!seenAsins.has(asin) && !/^0+$/.test(asin)) {
-            seenAsins.add(asin);
-            books.push({ asin, title: `Book ${asin}`, author: 'Unknown', publishDate: '', amazonUrl: `https://www.amazon.com/dp/${asin}` });
-          }
-        }
-      }
-    }
-
-    return books;
-  }
+  let amazonBrowser = null;
 
   try {
+    sendEvent('log', { level: 'brightdata', message: `🌐 Connecting to Scraping Browser for Amazon...` });
+    amazonBrowser = await puppeteer.connect({ browserWSEndpoint: BROWSER_WS });
+
     while (keepGoing && page_num <= maxPages) {
       const url = buildAmazonUrl(dateFrom, dateTo, page_num);
-      sendEvent('log', { level: 'info', message: `📄 Scraping Amazon page ${page_num} via Web Unlocker...` });
+      sendEvent('log', { level: 'info', message: `📄 Scraping Amazon page ${page_num}...` });
 
       let pageBooks = [];
+      const amzPage = await amazonBrowser.newPage();
+      amzPage.setDefaultNavigationTimeout(90000);
+
       try {
-        const html = await scrapeWithBrightData(url);
-        if (!html) {
-          sendEvent('log', { level: 'error', message: `❌ Page ${page_num}: No response from Web Unlocker` });
+        await amzPage.goto(url, { waitUntil: 'domcontentloaded', timeout: 90000 });
+
+        // Wait for non-empty data-asin to appear (real books loaded)
+        await amzPage.waitForFunction(
+          () => document.querySelector('[data-asin]:not([data-asin=""])') !== null,
+          { timeout: 30000 }
+        ).catch(() => {
+          // Timeout — results may still be loading
+        });
+
+        // Extra wait for dynamic content
+        await new Promise(r => setTimeout(r, 3000));
+
+        // Check CAPTCHA
+        const isCaptcha = await amzPage.$('input#captchacharacters').catch(() => null);
+        if (isCaptcha) {
+          sendEvent('log', { level: 'warning', message: `⚠️ CAPTCHA on page ${page_num}, skipping...` });
+          await amzPage.close();
           consecutiveEmpty++;
           if (consecutiveEmpty >= 2) break;
           page_num++;
           continue;
         }
 
-        const htmlLen = html.length;
-        sendEvent('log', { level: 'info', message: `📄 Page ${page_num}: Got ${htmlLen} chars of HTML` });
+        // Count non-empty ASINs
+        const nonEmptyAsins = await amzPage.$$eval(
+          '[data-asin]:not([data-asin=""])',
+          els => els.map(el => el.getAttribute('data-asin')).filter(a => a && a.length >= 8)
+        ).catch(() => []);
+        sendEvent('log', { level: 'info', message: `🔍 Non-empty ASINs found: ${nonEmptyAsins.length}` });
 
-        // Check for CAPTCHA
-        if (html.includes('captchacharacters') || html.includes('Type the characters you see')) {
-          sendEvent('log', { level: 'warning', message: `⚠️ CAPTCHA on page ${page_num} — retrying in 5s...` });
-          await new Promise(r => setTimeout(r, 5000));
-          continue;
-        }
+        pageBooks = await amzPage.$$eval('[data-asin]:not([data-asin=""])', (items) => {
+          return items.map(item => {
+            const asin = item.getAttribute('data-asin') || '';
+            if (!asin || asin.length < 8) return null;
+            // Title
+            const titleEl = item.querySelector('h2 a span') ||
+                            item.querySelector('h2 span') ||
+                            item.querySelector('[data-cy="title-recipe"] span') ||
+                            item.querySelector('.a-size-medium.a-color-base.a-text-normal') ||
+                            item.querySelector('.a-size-base-plus.a-color-base.a-text-normal') ||
+                            item.querySelector('.a-size-medium') ||
+                            item.querySelector('.a-size-base-plus');
+            const title = titleEl ? titleEl.textContent.trim() : '';
+            if (!title || title.length < 3) return null;
+            // Author
+            const authorEl = item.querySelector('a.a-link-normal[href*="/e/"]') ||
+                             item.querySelector('.a-row a.a-link-normal') ||
+                             item.querySelector('[class*="author"] .a-link-normal') ||
+                             item.querySelector('span.a-size-base a');
+            const author = authorEl ? authorEl.textContent.trim() : '';
+            // Date
+            const spans = Array.from(item.querySelectorAll('span.a-size-base.a-color-secondary'));
+            const dateEl = spans.find(s => /\w+ \d{1,2},? \d{4}/.test(s.textContent));
+            const publishDate = dateEl ? dateEl.textContent.trim() : '';
+            return { asin, title, author: author || 'Unknown', publishDate };
+          }).filter(Boolean);
+        }).catch(() => []);
 
-        // Debug: count data-asin occurrences
-        const asinCount = (html.match(/data-asin=/gi) || []).length;
-        const hasResults = html.includes('s-search-result') || html.includes('s-result-item');
-        sendEvent('log', { level: 'info', message: `🔍 data-asin occurrences: ${asinCount} | has s-search-result: ${hasResults}` });
+        await amzPage.close();
 
-        // Log first occurrence of data-asin for debugging
-        const firstAsinIdx = html.toLowerCase().indexOf('data-asin=');
-        if (firstAsinIdx > -1) {
-          sendEvent('log', { level: 'info', message: `📌 First data-asin: ...${html.substring(firstAsinIdx, firstAsinIdx + 80)}...` });
-        } else {
-          // No data-asin at all — log what the HTML looks like around "result"
-          const resultIdx = html.toLowerCase().indexOf('result');
-          if (resultIdx > -1) {
-            sendEvent('log', { level: 'warning', message: `⚠️ No data-asin found. Near "result": ${html.substring(resultIdx, resultIdx + 200).replace(/\n/g,' ')}` });
-          }
-        }
-
-        pageBooks = parseAmazonSearchHtml(html);
-        sendEvent('log', { level: pageBooks.length > 0 ? 'success' : 'warning', message: `📚 Page ${page_num}: ${pageBooks.length} books parsed` });
-
-        if (pageBooks.length === 0) {
-          consecutiveEmpty++;
-          if (consecutiveEmpty >= 2) break;
-          page_num++;
-          continue;
-        }
-        consecutiveEmpty = 0;
       } catch (pageError) {
+        await amzPage.close().catch(() => {});
         sendEvent('log', { level: 'error', message: `❌ Page ${page_num} error: ${pageError.message}` });
-        break;
+        consecutiveEmpty++;
+        if (consecutiveEmpty >= 3) break;
+        page_num++;
+        continue;
       }
+
+      sendEvent('log', { level: pageBooks.length > 0 ? 'success' : 'warning', message: `📚 Page ${page_num}: ${pageBooks.length} books found` });
 
       if (pageBooks.length === 0) {
-        break;
+        consecutiveEmpty++;
+        if (consecutiveEmpty >= 2) break;
+        page_num++;
+        continue;
       }
-
-      sendEvent('log', { level: 'success', message: `📚 Page ${page_num}: ${pageBooks.length} books` });
+      consecutiveEmpty = 0;
       page_num++;
 
       // Step 2: Process each book
@@ -936,6 +894,8 @@ app.post('/api/amazon', async (req, res) => {
   } catch (error) {
     sendEvent('log', { level: 'error', message: `❌ Fatal error: ${error.message}` });
     console.error('Amazon endpoint error:', error);
+  } finally {
+    if (amazonBrowser) await amazonBrowser.close().catch(() => {});
   }
 
   // Mark job complete
@@ -1130,30 +1090,26 @@ app.post('/api/search', async (req, res) => {
 
           totalCount++;
 
-          // Fetch full post to extract contact info (with retry)
-          sendEvent('log', { level: 'info', message: `🔍 Fetching full post: ${listing.title.substring(0, 50)}...` });
+          // Fetch full post via scraping browser
+          sendEvent('log', { level: 'info', message: `🔍 Fetching post: ${listing.title.substring(0, 50)}...` });
           let contacts = {};
           let postFetched = false;
-          for (let attempt = 1; attempt <= 2; attempt++) {
-            try {
-              const postHtml = await scrapeWithBrightData(listing.url);
-              if (postHtml) {
-                const { body } = parseCraigslistPost(postHtml);
-                if (body && body.length > 20) {
-                  sendEvent('log', { level: 'ai', message: `🤖 AI extracting contacts...` });
-                  contacts = await extractContactsWithAI(body, listing.title);
-                  sendEvent('log', { level: 'ai', message: `🧠 AI: Email="${contacts.email || 'N/A'}", Phone="${contacts.phone || 'N/A'}"` });
-                  postFetched = true;
-                  break;
-                }
+          try {
+            const postHtml = await scrapeWithBrowser(listing.url);
+            if (postHtml) {
+              const { body } = parseCraigslistPost(postHtml);
+              if (body && body.length > 20) {
+                sendEvent('log', { level: 'ai', message: `🤖 AI extracting contacts...` });
+                contacts = await extractContactsWithAI(body, listing.title);
+                sendEvent('log', { level: 'ai', message: `🧠 AI: Email="${contacts.email || 'N/A'}", Phone="${contacts.phone || 'N/A'}"` });
+                postFetched = true;
               }
-            } catch (fetchErr) {
-              sendEvent('log', { level: 'warning', message: `⚠️ Post fetch attempt ${attempt} failed: ${fetchErr.message}` });
-              if (attempt < 2) await new Promise(r => setTimeout(r, 2000));
             }
+          } catch (fetchErr) {
+            sendEvent('log', { level: 'warning', message: `⚠️ Post fetch failed: ${fetchErr.message}` });
           }
           if (!postFetched) {
-            sendEvent('log', { level: 'warning', message: `⚠️ Skipping post (fetch failed): ${listing.title.substring(0, 40)}` });
+            sendEvent('log', { level: 'warning', message: `⚠️ Skipping post — no content` });
             totalCount--;
             continue;
           }
