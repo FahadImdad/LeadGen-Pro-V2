@@ -697,93 +697,103 @@ app.post('/api/amazon', async (req, res) => {
   let verifiedCount = 0;
   let totalCount = 0;
 
-  // Step 1: Stream Amazon books page by page
-  let browser = null;
+  // Step 1: Stream Amazon books page by page using Web Unlocker (server-side rendered HTML)
   let page_num = 1;
   const maxPages = 50;
   let keepGoing = true;
+  let consecutiveEmpty = 0;
+
+  // Parse Amazon search results HTML (server-rendered)
+  function parseAmazonSearchHtml(html) {
+    const books = [];
+    // Extract data-asin blocks
+    const itemRegex = /data-asin="([A-Z0-9]{10})"[^>]*data-component-type="s-search-result"[\s\S]*?(?=data-asin="[A-Z0-9]{10}"|$)/g;
+    // Simpler approach: find all ASINs and extract title/author near them
+    const asinMatches = html.matchAll(/data-asin="([A-Z0-9]{10})"/g);
+    const seenAsins = new Set();
+
+    for (const match of asinMatches) {
+      const asin = match[1];
+      if (seenAsins.has(asin) || asin === '0000000000') continue;
+      seenAsins.add(asin);
+
+      // Get surrounding context (2000 chars after the asin attribute)
+      const startIdx = match.index;
+      const chunk = html.substring(startIdx, startIdx + 3000);
+
+      // Extract title from h2
+      const titleMatch = chunk.match(/<h2[^>]*>[\s\S]*?<a[^>]*>[\s\S]*?<span[^>]*>([\s\S]*?)<\/span>/);
+      let title = titleMatch ? titleMatch[1].replace(/<[^>]+>/g, '').trim() : '';
+
+      // Fallback: a-size-medium or a-size-base-plus span
+      if (!title) {
+        const t2 = chunk.match(/class="[^"]*a-size-(?:medium|base-plus)[^"]*"[^>]*>([\s\S]*?)<\/span>/);
+        title = t2 ? t2[1].replace(/<[^>]+>/g, '').trim() : '';
+      }
+
+      if (!title || title.length < 3) continue;
+
+      // Extract author
+      let author = '';
+      const authorMatch = chunk.match(/by\s+<a[^>]*>([^<]+)<\/a>/i) ||
+                          chunk.match(/class="[^"]*a-color-secondary[^"]*"[^>]*>[\s\S]*?by\s+([\w\s.]+?)[\s<]/i);
+      if (authorMatch) author = authorMatch[1].trim();
+
+      // Extract publish date
+      let publishDate = '';
+      const dateMatch = chunk.match(/(\w+ \d{1,2},?\s*\d{4})/);
+      if (dateMatch) publishDate = dateMatch[1];
+
+      books.push({ asin, title, author, publishDate, amazonUrl: `https://www.amazon.com/dp/${asin}` });
+    }
+    return books;
+  }
 
   try {
-    browser = await puppeteer.connect({ browserWSEndpoint: BROWSER_WS });
-
     while (keepGoing && page_num <= maxPages) {
       const url = buildAmazonUrl(dateFrom, dateTo, page_num);
-      sendEvent('log', { level: 'info', message: `📄 Scraping Amazon page ${page_num}...` });
-
-      const page = await browser.newPage();
-      page.setDefaultNavigationTimeout(60000);
+      sendEvent('log', { level: 'info', message: `📄 Scraping Amazon page ${page_num} via Web Unlocker...` });
 
       let pageBooks = [];
       try {
-        await page.goto(url, { waitUntil: 'networkidle2', timeout: 60000 });
+        const html = await scrapeWithBrightData(url);
+        if (!html) {
+          sendEvent('log', { level: 'error', message: `❌ Page ${page_num}: No response from Web Unlocker` });
+          consecutiveEmpty++;
+          if (consecutiveEmpty >= 2) break;
+          page_num++;
+          continue;
+        }
 
-        // Check if we got a CAPTCHA or blocked page
-        const pageTitle = await page.title().catch(() => '');
-        const pageUrl = page.url();
-        sendEvent('log', { level: 'info', message: `📄 Page title: "${pageTitle}" | URL: ${pageUrl.substring(0, 80)}` });
-
-        // Wait a bit for dynamic content
-        await new Promise(r => setTimeout(r, 2000));
+        const htmlLen = html.length;
+        sendEvent('log', { level: 'info', message: `📄 Page ${page_num}: Got ${htmlLen} chars of HTML` });
 
         // Check for CAPTCHA
-        const isCaptcha = await page.$('#captchacharacters, form[action*="captcha"], .a-box-inner img[src*="captcha"]').catch(() => null);
-        if (isCaptcha) {
-          sendEvent('log', { level: 'warning', message: `⚠️ Amazon CAPTCHA detected on page ${page_num} — Bright Data should handle this, retrying...` });
+        if (html.includes('captchacharacters') || html.includes('Type the characters you see')) {
+          sendEvent('log', { level: 'warning', message: `⚠️ CAPTCHA on page ${page_num} — Web Unlocker should bypass, retrying in 5s...` });
           await new Promise(r => setTimeout(r, 5000));
+          continue;
         }
 
-        await page.waitForSelector('[data-component-type="s-search-result"]', { timeout: 20000 }).catch(() => {});
+        pageBooks = parseAmazonSearchHtml(html);
+        sendEvent('log', { level: pageBooks.length > 0 ? 'success' : 'warning', message: `📚 Page ${page_num}: ${pageBooks.length} books parsed` });
 
-        // Count items before extracting
-        const itemCount = await page.$$eval('[data-component-type="s-search-result"]', els => els.length).catch(() => 0);
-        sendEvent('log', { level: 'info', message: `📊 Found ${itemCount} result elements on page` });
-
-        if (itemCount === 0) {
-          // Dump some page content for debugging
-          const bodyText = await page.evaluate(() => document.body?.innerText?.substring(0, 300) || '').catch(() => '');
-          sendEvent('log', { level: 'warning', message: `⚠️ Page content preview: ${bodyText.replace(/\n/g, ' ').substring(0, 200)}` });
+        if (pageBooks.length === 0) {
+          // Log snippet to see what we got
+          const snippet = html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').substring(0, 300);
+          sendEvent('log', { level: 'warning', message: `⚠️ HTML snippet: ${snippet}` });
+          consecutiveEmpty++;
+          if (consecutiveEmpty >= 2) break;
+          page_num++;
+          continue;
         }
-
-        pageBooks = await page.$$eval('[data-component-type="s-search-result"]', (items) => {
-          return items.map(item => {
-            const asin = item.getAttribute('data-asin') || '';
-            // Try multiple title selectors
-            const titleEl = item.querySelector('h2 a span') ||
-                            item.querySelector('h2 span') ||
-                            item.querySelector('.a-size-medium.a-color-base.a-text-normal') ||
-                            item.querySelector('.a-size-base-plus.a-color-base.a-text-normal') ||
-                            item.querySelector('.a-size-medium') ||
-                            item.querySelector('.a-size-base-plus');
-            const title = titleEl ? titleEl.textContent.trim() : '';
-            // Try multiple author selectors
-            const authorEl = item.querySelector('.a-row .a-size-base+ .a-size-base') ||
-                             item.querySelector('div.a-row.a-size-base.a-color-secondary span.a-size-base') ||
-                             item.querySelector('[class*="author"] .a-link-normal') ||
-                             item.querySelector('.a-row a.a-link-normal') ||
-                             item.querySelector('span.a-size-base a.a-link-normal');
-            const author = authorEl ? authorEl.textContent.trim().replace(/^by\s+/i, '') : '';
-            // Publication date
-            const dateEl = item.querySelector('.a-color-secondary .a-size-base') ||
-                           item.querySelector('span.a-size-base.a-color-secondary') ||
-                           item.querySelector('[class*="publication"]');
-            const publishDate = dateEl ? dateEl.textContent.trim() : '';
-            return { asin, title, author, publishDate };
-          }).filter(b => b.asin && b.title && b.title.length > 2);
-        }).catch(() => []);
-        await page.close();
+        consecutiveEmpty = 0;
       } catch (pageError) {
-        await page.close().catch(() => {});
         sendEvent('log', { level: 'error', message: `❌ Page ${page_num} error: ${pageError.message}` });
         break;
       }
 
       if (pageBooks.length === 0) {
-        sendEvent('log', { level: 'warning', message: `⚠️ No books on page ${page_num} — Amazon may be blocking or date filter too narrow. Try a wider date range.` });
-        // Try next page once before giving up
-        if (page_num === 1) {
-          page_num++;
-          continue;
-        }
         break;
       }
 
@@ -885,8 +895,6 @@ app.post('/api/amazon', async (req, res) => {
   } catch (error) {
     sendEvent('log', { level: 'error', message: `❌ Fatal error: ${error.message}` });
     console.error('Amazon endpoint error:', error);
-  } finally {
-    if (browser) await browser.close().catch(() => {});
   }
 
   // Mark job complete
