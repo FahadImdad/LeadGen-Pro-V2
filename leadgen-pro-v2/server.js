@@ -844,20 +844,38 @@ async function findAuthorContact(authorName, bookTitle, saveLog) {
     `hello@${firstName}${lastName}.com`,
     `${firstName}@${firstName}${lastName}author.com`,
   ];
-  const patternResults = await Promise.all(
-    commonPatterns.map(async email => {
-      try {
-        const r = await axios.get(`https://api.hunter.io/v2/email-verifier?email=${encodeURIComponent(email)}&api_key=${HUNTER_API_KEY}`, { timeout: 5000 });
-        const status = r.data?.data?.status;
-        if (status === 'valid' || status === 'accept_all') return { email, status };
-      } catch(e) {}
-      return null;
-    })
-  );
-  const patternEmail = patternResults.find(r => r?.email);
-  if (patternEmail) {
-    saveLog('success', `📧 Pattern email verified: ${patternEmail.email}`);
-    return { email: patternEmail.email, website: uniqueWebsites[0] || null };
+  // Only try domain-based patterns (e.g. john@johnsmith.com) — NOT gmail/yahoo/hotmail
+  // because those can match any random person with the same name
+  const domainPatterns = [
+    `${firstName}@${firstName}${lastName}.com`,
+    `contact@${firstName}${lastName}.com`,
+    `hello@${firstName}${lastName}.com`,
+    `info@${firstName}${lastName}.com`,
+    `${firstName}@${firstName}${lastName}author.com`,
+    `${firstName}.${lastName}@${firstName}${lastName}.com`,
+  ].filter(e => {
+    // Only use if the domain looks like a real author domain (contains their name)
+    const domain = e.split('@')[1] || '';
+    return domain.includes(firstName) || domain.includes(lastName);
+  });
+
+  if (domainPatterns.length > 0) {
+    const patternResults = await Promise.all(
+      domainPatterns.map(async email => {
+        try {
+          const r = await axios.get(`https://api.hunter.io/v2/email-verifier?email=${encodeURIComponent(email)}&api_key=${HUNTER_API_KEY}`, { timeout: 5000 });
+          const status = r.data?.data?.status;
+          // Only accept 'valid' — not 'accept_all' (accept_all = server accepts all emails, can't confirm person)
+          if (status === 'valid') return { email, status };
+        } catch(e) {}
+        return null;
+      })
+    );
+    const patternEmail = patternResults.find(r => r?.email);
+    if (patternEmail) {
+      saveLog('success', `📧 Domain pattern email verified: ${patternEmail.email}`);
+      return { email: patternEmail.email, website: uniqueWebsites[0] || null };
+    }
   }
 
   if (uniqueWebsites.length === 0) {
