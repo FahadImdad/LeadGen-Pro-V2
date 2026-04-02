@@ -1217,9 +1217,9 @@ app.post('/api/amazon', async (req, res) => {
   // Run scraping in background
   setImmediate(async () => {
     // Local sendEvent writes logs to DB instead of SSE
-    const sendEvent = (type, data) => {
+    const sendEvent = async (type, data) => {
       if (type === 'log') {
-        saveLog(jobId, data.level || 'info', data.message || '');
+        await saveLog(jobId, data.level || 'info', data.message || '');
       }
       // progress/lead/complete are handled via DB updates — no action needed
     };
@@ -1228,7 +1228,7 @@ app.post('/api/amazon', async (req, res) => {
     let totalCount = 0;
 
     try {
-      saveLog(jobId, 'info', `🚀 Starting Amazon Author Lead Gen (job #${jobId}, target: ${targetLeads} verified leads)...`);
+      await saveLog(jobId, 'info', `🚀 Starting Amazon Author Lead Gen (job #${jobId}, target: ${targetLeads} verified leads)...`);
 
       let page_num = 1;
       const maxPages = MAX_PAGES_PER_URL;
@@ -1236,22 +1236,22 @@ app.post('/api/amazon', async (req, res) => {
       let consecutiveEmpty = 0;
       let urlIndex = 0;
       const seenAsinsThisRun = new Set();
-      saveLog(jobId, 'info', `📚 Total categories: ${AMAZON_CATEGORY_NODES.length} × ${MAX_PAGES_PER_URL} pages = ${AMAZON_CATEGORY_NODES.length * MAX_PAGES_PER_URL * 50} max books`);
+      await saveLog(jobId, 'info', `📚 Total categories: ${AMAZON_CATEGORY_NODES.length} × ${MAX_PAGES_PER_URL} pages = ${AMAZON_CATEGORY_NODES.length * MAX_PAGES_PER_URL * 50} max books`);
 
       try {
-        saveLog(jobId, 'info', `🚀 Amazon scraper using Web Unlocker (no browser needed)...`);
+        await saveLog(jobId, 'info', `🚀 Amazon scraper using Web Unlocker (no browser needed)...`);
 
         // Scrape Amazon page via Web Unlocker (no browser needed — returns full HTML)
         async function scrapeOnePage(pageNum) {
           const pgUrl = getAmazonUrl(urlIndex, pageNum);
           try {
-            saveLog(jobId, 'info', `🌐 Fetching: ${pgUrl.substring(30,70)}...`);
+            await saveLog(jobId, 'info', `🌐 Fetching: ${pgUrl.substring(30,70)}...`);
             const html = await scrapeWithBrightData(pgUrl);
             if (!html) return [];
             const books = parseAmazonNewReleasesHtml(html);
             return books;
           } catch(e) {
-            saveLog(jobId, 'warning', `⚠️ Page fetch error: ${e.message}`);
+            await saveLog(jobId, 'warning', `⚠️ Page fetch error: ${e.message}`);
             return [];
           }
         }
@@ -1264,26 +1264,26 @@ app.post('/api/amazon', async (req, res) => {
             consecutiveEmpty = 0;
             if (urlIndex >= AMAZON_CATEGORY_NODES.length) {
               urlIndex = 0;
-              saveLog(jobId, 'info', `🔄 Completed all ${AMAZON_CATEGORY_NODES.length} category URLs — waiting 10min then restarting...`);
+              await saveLog(jobId, 'info', `🔄 Completed all ${AMAZON_CATEGORY_NODES.length} category URLs — waiting 10min then restarting...`);
               await new Promise(r => setTimeout(r, 10 * 60 * 1000));
               seenAsinsThisRun.clear();
             } else {
-              saveLog(jobId, 'info', `📂 Moving to next category URL ${urlIndex+1}/${AMAZON_CATEGORY_NODES.length}...`);
+              await saveLog(jobId, 'info', `📂 Moving to next category URL ${urlIndex+1}/${AMAZON_CATEGORY_NODES.length}...`);
             }
           }
 
           const pageBatch = [page_num, page_num+1, page_num+2].filter(p => p <= maxPages);
-          saveLog(jobId, 'info', `📄 Category ${urlIndex+1}/${AMAZON_CATEGORY_NODES.length} — pages ${pageBatch.join(',')}...`);
+          await saveLog(jobId, 'info', `📄 Category ${urlIndex+1}/${AMAZON_CATEGORY_NODES.length} — pages ${pageBatch.join(',')}...`);
           const batchResults = await Promise.all(pageBatch.map(p => scrapeOnePage(p)));
           page_num += 3;
           const pageBooks = batchResults.flat();
-          saveLog(jobId, 'info', `📚 Got ${pageBooks.length} books from ${pageBatch.length} pages`);
+          await saveLog(jobId, 'info', `📚 Got ${pageBooks.length} books from ${pageBatch.length} pages`);
           if (pageBooks.length === 0) { consecutiveEmpty++; if(consecutiveEmpty>=3) { page_num = maxPages + 1; } continue; }
           consecutiveEmpty = 0;
 
           // Concurrency pool — keep CONCURRENCY slots busy
           const CONCURRENCY = 25;
-          saveLog(jobId, 'info', `⚡ Processing ${pageBooks.length} authors with ${CONCURRENCY} concurrent workers...`);
+          await saveLog(jobId, 'info', `⚡ Processing ${pageBooks.length} authors with ${CONCURRENCY} concurrent workers...`);
 
           // Filter out already-seen ASINs (both DB and current run)
           const newBooks = [];
@@ -1298,7 +1298,7 @@ app.post('/api/amazon', async (req, res) => {
           // If all books on this batch were repeats, Amazon is cycling — move to next loop
           if (newBooks.length === 0 && pageBooks.length > 0) {
             consecutiveEmpty++;
-            saveLog(jobId, 'info', `⏭️ All books already seen on pages ${page_num-3}-${page_num} — Amazon cycling`);
+            await saveLog(jobId, 'info', `⏭️ All books already seen on pages ${page_num-3}-${page_num} — Amazon cycling`);
           }
 
           // Run with concurrency pool
@@ -1339,14 +1339,14 @@ app.post('/api/amazon', async (req, res) => {
 
             // Skip unknown authors — can't find contact info for them
             if (!author || author === 'Unknown' || author.trim().length < 3) {
-              saveLog(jobId, 'info', `⏭️ SKIP (unknown author): ${title.substring(0, 50)}`);
+              await saveLog(jobId, 'info', `⏭️ SKIP (unknown author): ${title.substring(0, 50)}`);
               return;
             }
 
             // Review filter — skip books with more than 10 reviews (already established authors)
             const MAX_REVIEWS = 10;
             if (book.reviewCount > MAX_REVIEWS) {
-              saveLog(jobId, 'info', `⏭️ SKIP (${book.reviewCount} reviews > ${MAX_REVIEWS}): ${title.substring(0, 50)}`);
+              await saveLog(jobId, 'info', `⏭️ SKIP (${book.reviewCount} reviews > ${MAX_REVIEWS}): ${title.substring(0, 50)}`);
               return;
             }
 
@@ -1358,11 +1358,11 @@ app.post('/api/amazon', async (req, res) => {
               toDate.setHours(23, 59, 59, 999); // inclusive end
               if (!isNaN(pubDate.getTime())) {
                 if (pubDate < fromDate) {
-                  saveLog(jobId, 'info', `⏭️ SKIP (published ${book.publishDate} — before range): ${title.substring(0, 50)}`);
+                  await saveLog(jobId, 'info', `⏭️ SKIP (published ${book.publishDate} — before range): ${title.substring(0, 50)}`);
                   return;
                 }
                 if (pubDate > toDate) {
-                  saveLog(jobId, 'info', `⏭️ SKIP (published ${book.publishDate} — after range / pre-order): ${title.substring(0, 50)}`);
+                  await saveLog(jobId, 'info', `⏭️ SKIP (published ${book.publishDate} — after range / pre-order): ${title.substring(0, 50)}`);
                   return;
                 }
               }
@@ -1371,21 +1371,21 @@ app.post('/api/amazon', async (req, res) => {
             // ASIN dedup — skip entirely if already in DB
             const asinExists = await db.prepare('SELECT id FROM amazon_leads WHERE asin = ?').get(asin);
             if (asinExists) {
-              saveLog(jobId, 'info', `⏭️ SKIP (seen ASIN): ${asin}`);
+              await saveLog(jobId, 'info', `⏭️ SKIP (seen ASIN): ${asin}`);
               return;
             }
 
             // Author dedup — skip if we already found this author in any job
             const authorExists = await db.prepare('SELECT id FROM amazon_leads WHERE author = ? AND email IS NOT NULL').get(author);
             if (authorExists) {
-              saveLog(jobId, 'info', `⏭️ SKIP (author already processed): ${author}`);
+              await saveLog(jobId, 'info', `⏭️ SKIP (author already processed): ${author}`);
               return;
             }
 
-            saveLog(jobId, 'info', `📚 Processing: "${title}" by ${author} (${book.reviewCount || 0} reviews)`);
+            await saveLog(jobId, 'info', `📚 Processing: "${title}" by ${author} (${book.reviewCount || 0} reviews)`);
 
             // Find author contact
-            const { email, website } = await findAuthorContact(author, title, (level, msg) => saveLog(jobId, level, msg));
+            const { email, website } = await findAuthorContact(author, title, async (level, msg) => await saveLog(jobId, level, msg));
 
             // Verify email
             let emailVerified = false;
@@ -1405,7 +1405,7 @@ app.post('/api/amazon', async (req, res) => {
                 emailVerified = true;
                 emailStatus = 'author_domain';
                 emailConfidence = 'high';
-                saveLog(jobId, 'success', `✅ HIGH: email on author domain (${emailDomain})`);
+                await saveLog(jobId, 'success', `✅ HIGH: email on author domain (${emailDomain})`);
               } else if (isGenericDomain && localHasAuthorName) {
                 // e.g. howardpartridge@gmail.com — name matches, but verify against author's website
                 emailVerified = true;
@@ -1419,24 +1419,24 @@ app.post('/api/amazon', async (req, res) => {
                     if (siteHtml && siteHtml.toLowerCase().includes(email.toLowerCase())) {
                       emailConfidence = 'high';
                       emailStatus = 'website_confirmed';
-                      saveLog(jobId, 'success', `✅ HIGH: Gmail confirmed on author website (${email})`);
+                      await saveLog(jobId, 'success', `✅ HIGH: Gmail confirmed on author website (${email})`);
                     } else {
-                      saveLog(jobId, 'success', `🟡 MEDIUM: Gmail/Yahoo name match, not on website (${email})`);
+                      await saveLog(jobId, 'success', `🟡 MEDIUM: Gmail/Yahoo name match, not on website (${email})`);
                     }
                   } catch(e) {
-                    saveLog(jobId, 'success', `🟡 MEDIUM: Gmail/Yahoo name match (${email})`);
+                    await saveLog(jobId, 'success', `🟡 MEDIUM: Gmail/Yahoo name match (${email})`);
                   }
                 } else {
-                  saveLog(jobId, 'success', `🟡 MEDIUM: Gmail/Yahoo name match (${email})`);
+                  await saveLog(jobId, 'success', `🟡 MEDIUM: Gmail/Yahoo name match (${email})`);
                 }
               } else {
                 // Unknown email — run Hunter to verify
-                saveLog(jobId, 'hunter', `📧 HUNTER.IO: Verifying ${email}...`);
+                await saveLog(jobId, 'hunter', `📧 HUNTER.IO: Verifying ${email}...`);
                 const verification = await verifyEmail(email);
                 emailVerified = verification.valid;
                 emailStatus = verification.status;
                 emailConfidence = emailVerified ? 'high' : 'low';
-                saveLog(jobId, emailVerified ? 'success' : 'warning', `${emailVerified ? '✅ HIGH' : '⚠️ LOW'}: HUNTER.IO ${emailStatus || 'unverified'}`);
+                await saveLog(jobId, emailVerified ? 'success' : 'warning', `${emailVerified ? '✅ HIGH' : '⚠️ LOW'}: HUNTER.IO ${emailStatus || 'unverified'}`);
               }
             }
 
@@ -1445,7 +1445,7 @@ app.post('/api/amazon', async (req, res) => {
 
             // Skip entirely if no email AND no website — nothing useful to save
             if (!email && !hasRealWebsite) {
-              saveLog(jobId, 'info', `⏭️ SKIP (no email, no website): ${author}`);
+              await saveLog(jobId, 'info', `⏭️ SKIP (no email, no website): ${author}`);
               return;
             }
 
@@ -1455,7 +1455,7 @@ app.post('/api/amazon', async (req, res) => {
               const emailExists = await db.prepare('SELECT id FROM amazon_leads WHERE email = ? AND job_id != ?').get(email, jobId);
               if (emailExists) {
                 isDuplicate = 1;
-                saveLog(jobId, 'warning', `♻️ DUPLICATE email: ${email}`);
+                await saveLog(jobId, 'warning', `♻️ DUPLICATE email: ${email}`);
               }
             }
 
@@ -1467,7 +1467,7 @@ app.post('/api/amazon', async (req, res) => {
                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
               ).run(jobId, author, title, book.publishDate || null, book.reviewCount || 0, email || null, emailVerified ? 1 : 0, emailStatus, emailConfidence || null, hasRealWebsite ? website : null, amazonUrl, asin, isDuplicate);
             } catch (dbErr) {
-              saveLog(jobId, 'warning', `⚠️ DB insert skipped (dupe): ${asin}`);
+              await saveLog(jobId, 'warning', `⚠️ DB insert skipped (dupe): ${asin}`);
               totalCount--;
               return;
             }
@@ -1476,22 +1476,22 @@ app.post('/api/amazon', async (req, res) => {
               // Fully verified lead — counts toward target
               verifiedCount++;
               await db.prepare('UPDATE scrape_jobs SET verified_count = ?, total_count = ? WHERE id = ?').run(verifiedCount, totalCount, jobId);
-              saveLog(jobId, 'success', `✅ VERIFIED #${verifiedCount}: ${author} | ${email}`);
+              await saveLog(jobId, 'success', `✅ VERIFIED #${verifiedCount}: ${author} | ${email}`);
             } else if (!email && hasRealWebsite) {
               // Website-only lead — useful but not counted toward target
               await db.prepare('UPDATE scrape_jobs SET total_count = ? WHERE id = ?').run(totalCount, jobId);
-              saveLog(jobId, 'info', `🌐 WEBSITE-ONLY: ${author} | ${website}`);
+              await saveLog(jobId, 'info', `🌐 WEBSITE-ONLY: ${author} | ${website}`);
             } else {
               await db.prepare('UPDATE scrape_jobs SET total_count = ? WHERE id = ?').run(totalCount, jobId);
               const reason = isDuplicate ? 'duplicate email' : 'unverified email';
-              saveLog(jobId, 'info', `📝 Saved (${reason}): ${author}`);
+              await saveLog(jobId, 'info', `📝 Saved (${reason}): ${author}`);
             }
           } // end processBook
 
           await new Promise(r => setTimeout(r, 500));
         }
       } catch (error) {
-        saveLog(jobId, 'error', `❌ Fatal error: ${error.message}`);
+        await saveLog(jobId, 'error', `❌ Fatal error: ${error.message}`);
         console.error('Amazon background error:', error);
       }
 
@@ -1500,13 +1500,13 @@ app.post('/api/amazon', async (req, res) => {
         `UPDATE scrape_jobs SET status = 'complete', verified_count = ?, total_count = ?, completed_at = CURRENT_TIMESTAMP WHERE id = ?`
       ).run(verifiedCount, totalCount, jobId);
 
-      saveLog(jobId, 'success', `\n🎯 AMAZON COMPLETE! Verified: ${verifiedCount} / ${targetLeads} | Total processed: ${totalCount}`);
+      await saveLog(jobId, 'success', `\n🎯 AMAZON COMPLETE! Verified: ${verifiedCount} / ${targetLeads} | Total processed: ${totalCount}`);
 
     } catch (fatalErr) {
       console.error('Amazon background fatal:', fatalErr);
       try {
         await db.prepare(`UPDATE scrape_jobs SET status = 'error', completed_at = CURRENT_TIMESTAMP WHERE id = ?`).run(jobId);
-        saveLog(jobId, 'error', `❌ Fatal background error: ${fatalErr.message}`);
+        await saveLog(jobId, 'error', `❌ Fatal background error: ${fatalErr.message}`);
       } catch(e) {}
     }
   });
@@ -1544,9 +1544,9 @@ app.post('/api/search', async (req, res) => {
   // Run scraping in background
   setImmediate(async () => {
     // Local sendEvent writes logs to DB
-    const sendEvent = (type, data) => {
+    const sendEvent = async (type, data) => {
       if (type === 'log') {
-        saveLog(jobId, data.level || 'info', data.message || '');
+        await saveLog(jobId, data.level || 'info', data.message || '');
       }
     };
 
@@ -1554,7 +1554,7 @@ app.post('/api/search', async (req, res) => {
     let totalCount = 0;
 
     try {
-      saveLog(jobId, 'info', `🚀 Starting Intent Lead search (job #${jobId})...`);
+      await saveLog(jobId, 'info', `🚀 Starting Intent Lead search (job #${jobId})...`);
 
       let cities;
       if (!region || region === 'all') {
@@ -1601,72 +1601,72 @@ app.post('/api/search', async (req, res) => {
           if (emailVerified && isDuplicate === 0) {
             verifiedCount++;
             await db.prepare('UPDATE scrape_jobs SET verified_count=? WHERE id=?').run(verifiedCount, jobId);
-            saveLog(jobId, 'success', `✅ VERIFIED #${verifiedCount}: ${contacts.email} via ${post.source}`);
+            await saveLog(jobId, 'success', `✅ VERIFIED #${verifiedCount}: ${contacts.email} via ${post.source}`);
           }
           await new Promise(r => setTimeout(r, 300));
         }
       }
 
-      const logFn = (type, data) => { if (type === 'log') saveLog(jobId, data.level||'info', data.message||''); };
+      const logFn = async (type, data) => { if (type === 'log') await saveLog(jobId, data.level||'info', data.message||''); };
 
       // ========== UPWORK ==========
       if ((sourceFilter === 'all' || sourceFilter === 'upwork') && verifiedCount < targetLeads) {
-        saveLog(jobId, 'info', `🔍 Searching Upwork...`);
+        await saveLog(jobId, 'info', `🔍 Searching Upwork...`);
         try {
           const upworkPosts = await scrapeUpwork(keyword, dateFrom, dateTo, logFn);
           await processLeadPosts(upworkPosts, 'upwork');
-        } catch(e) { saveLog(jobId, 'warning', `⚠️ Upwork failed: ${e.message}`); }
+        } catch(e) { await saveLog(jobId, 'warning', `⚠️ Upwork failed: ${e.message}`); }
       }
 
       // ========== FIVERR ==========
       if ((sourceFilter === 'all' || sourceFilter === 'fiverr') && verifiedCount < targetLeads) {
-        saveLog(jobId, 'info', `🔍 Searching Fiverr...`);
+        await saveLog(jobId, 'info', `🔍 Searching Fiverr...`);
         try {
           const fiverrPosts = await scrapeFiverr(keyword, logFn);
           await processLeadPosts(fiverrPosts, 'fiverr');
-        } catch(e) { saveLog(jobId, 'warning', `⚠️ Fiverr failed: ${e.message}`); }
+        } catch(e) { await saveLog(jobId, 'warning', `⚠️ Fiverr failed: ${e.message}`); }
       }
 
       // ========== TWITTER/X ==========
       if ((sourceFilter === 'all' || sourceFilter === 'twitter') && verifiedCount < targetLeads) {
-        saveLog(jobId, 'info', `🔍 Searching Twitter/X...`);
+        await saveLog(jobId, 'info', `🔍 Searching Twitter/X...`);
         try {
           const twitterPosts = await scrapeTwitter(keyword, dateFrom, dateTo, logFn);
           await processLeadPosts(twitterPosts, 'twitter');
-        } catch(e) { saveLog(jobId, 'warning', `⚠️ Twitter failed: ${e.message}`); }
+        } catch(e) { await saveLog(jobId, 'warning', `⚠️ Twitter failed: ${e.message}`); }
       }
 
       // ========== FACEBOOK ==========
       if ((sourceFilter === 'all' || sourceFilter === 'facebook') && verifiedCount < targetLeads) {
-        saveLog(jobId, 'info', `🔍 Searching Facebook...`);
+        await saveLog(jobId, 'info', `🔍 Searching Facebook...`);
         try {
           const fbPosts = await scrapeFacebookGroups(keyword, logFn);
           await processLeadPosts(fbPosts, 'facebook');
-        } catch(e) { saveLog(jobId, 'warning', `⚠️ Facebook failed: ${e.message}`); }
+        } catch(e) { await saveLog(jobId, 'warning', `⚠️ Facebook failed: ${e.message}`); }
       }
 
       // ========== REDDIT ==========
       if ((sourceFilter === 'all' || sourceFilter === 'reddit') && verifiedCount < targetLeads) {
-        saveLog(jobId, 'info', `🔍 Starting Reddit search for "${keyword}"...`);
+        await saveLog(jobId, 'info', `🔍 Starting Reddit search for "${keyword}"...`);
         let redditPosts = [];
         try {
           redditPosts = await scrapeReddit(keyword, logFn, dateFrom, dateTo);
-        } catch(e) { saveLog(jobId, 'warning', `⚠️ Reddit failed: ${e.message}`); }
+        } catch(e) { await saveLog(jobId, 'warning', `⚠️ Reddit failed: ${e.message}`); }
 
         await processLeadPosts(redditPosts, 'reddit');
       }
 
       // ========== CRAIGSLIST ==========
       if ((sourceFilter === 'all' || sourceFilter === 'craigslist') && verifiedCount < targetLeads) {
-        saveLog(jobId, 'info', `\n📍 Searching Craigslist (${cities.length} cities)...`);
+        await saveLog(jobId, 'info', `\n📍 Searching Craigslist (${cities.length} cities)...`);
 
         // Reuse a single browser for all CL work to avoid connection exhaustion
         let clBrowser = null;
         try {
-          saveLog(jobId, 'brightdata', `🌐 Opening shared Craigslist browser...`);
+          await saveLog(jobId, 'brightdata', `🌐 Opening shared Craigslist browser...`);
           clBrowser = await puppeteer.connect({ browserWSEndpoint: BROWSER_WS });
         } catch (e) {
-          saveLog(jobId, 'error', `❌ Could not connect browser: ${e.message}`);
+          await saveLog(jobId, 'error', `❌ Could not connect browser: ${e.message}`);
         }
 
         // Helper: fetch a single CL post using shared browser (with reconnect)
@@ -1676,9 +1676,9 @@ app.post('/api/search', async (req, res) => {
             try {
               if (clBrowser) await clBrowser.close().catch(() => {});
               clBrowser = await puppeteer.connect({ browserWSEndpoint: BROWSER_WS });
-              saveLog(jobId, 'brightdata', `🔄 CL browser reconnected`);
+              await saveLog(jobId, 'brightdata', `🔄 CL browser reconnected`);
             } catch (e) {
-              saveLog(jobId, 'error', `❌ CL reconnect failed: ${e.message}`);
+              await saveLog(jobId, 'error', `❌ CL reconnect failed: ${e.message}`);
               return null;
             }
           }
@@ -1737,9 +1737,9 @@ app.post('/api/search', async (req, res) => {
                 }
               }
             }
-            saveLog(jobId, 'success', `✅ ${city}: ${results.length} gigs`);
+            await saveLog(jobId, 'success', `✅ ${city}: ${results.length} gigs`);
           } catch (e) {
-            saveLog(jobId, 'error', `❌ ${city}: ${e.message}`);
+            await saveLog(jobId, 'error', `❌ ${city}: ${e.message}`);
           } finally {
             await page.close().catch(() => {});
           }
@@ -1751,7 +1751,7 @@ app.post('/api/search', async (req, res) => {
 
           try {
             const listings = await scrapeCLCity(city, keyword);
-            saveLog(jobId, 'info', `📊 ${city}: ${listings.length} listings`);
+            await saveLog(jobId, 'info', `📊 ${city}: ${listings.length} listings`);
 
             for (const listing of listings.slice(0, 20)) {
               if (verifiedCount >= targetLeads) break;
@@ -1759,14 +1759,14 @@ app.post('/api/search', async (req, res) => {
               // URL dedup
               const urlExists = await db.prepare('SELECT id FROM intent_leads WHERE url = ?').get(listing.url);
               if (urlExists) {
-                saveLog(jobId, 'info', `⏭️ SKIP (seen): ${listing.url.substring(0, 60)}`);
+                await saveLog(jobId, 'info', `⏭️ SKIP (seen): ${listing.url.substring(0, 60)}`);
                 continue;
               }
 
               totalCount++;
 
               // Fetch full post using shared browser
-              saveLog(jobId, 'info', `🔍 Fetching: ${listing.title.substring(0, 50)}...`);
+              await saveLog(jobId, 'info', `🔍 Fetching: ${listing.title.substring(0, 50)}...`);
               let contacts = {};
               let postBody = '';
               let postFetched = false;
@@ -1777,12 +1777,12 @@ app.post('/api/search', async (req, res) => {
                   if (body && body.length > 20) {
                     postBody = body;
                     contacts = await extractContactsWithAI(body, listing.title);
-                    saveLog(jobId, 'ai', `🧠 Email="${contacts.email || 'N/A'}", Phone="${contacts.phone || 'N/A'}"`);
+                    await saveLog(jobId, 'ai', `🧠 Email="${contacts.email || 'N/A'}", Phone="${contacts.phone || 'N/A'}"`);
                     postFetched = true;
                   }
                 }
               } catch (fetchErr) {
-                saveLog(jobId, 'warning', `⚠️ Post fetch failed: ${fetchErr.message}`);
+                await saveLog(jobId, 'warning', `⚠️ Post fetch failed: ${fetchErr.message}`);
               }
               if (!postFetched) {
                 totalCount--;
@@ -1796,12 +1796,12 @@ app.post('/api/search', async (req, res) => {
                 if (website) {
                   try {
                     const domain = new URL(website).hostname.replace(/^www\./, '');
-                    saveLog(jobId, 'hunter', `🔍 Hunter domain search: ${domain}`);
+                    await saveLog(jobId, 'hunter', `🔍 Hunter domain search: ${domain}`);
                     const domainEmail = await findEmailByDomain(domain);
                     if (domainEmail) {
                       contacts.email = domainEmail;
                       contacts.website = website;
-                      saveLog(jobId, 'success', `📧 Hunter found: ${domainEmail}`);
+                      await saveLog(jobId, 'success', `📧 Hunter found: ${domainEmail}`);
                     }
                   } catch(e) {}
                 }
@@ -1811,7 +1811,7 @@ app.post('/api/search', async (req, res) => {
               if (budgetFilter > 0 && contacts.budget) {
                 const budgetNum = parseInt(contacts.budget.replace(/[^0-9]/g, ''));
                 if (budgetNum > 0 && budgetNum < budgetFilter) {
-                  saveLog(jobId, 'reject', `❌ REJECTED: Budget $${budgetNum} < $${budgetFilter}`);
+                  await saveLog(jobId, 'reject', `❌ REJECTED: Budget $${budgetNum} < $${budgetFilter}`);
                   totalCount--;
                   continue;
                 }
@@ -1821,11 +1821,11 @@ app.post('/api/search', async (req, res) => {
               let emailVerified = false;
               let emailStatus = null;
               if (contacts.email) {
-                saveLog(jobId, 'hunter', `📧 HUNTER.IO: Verifying ${contacts.email}...`);
+                await saveLog(jobId, 'hunter', `📧 HUNTER.IO: Verifying ${contacts.email}...`);
                 const verification = await verifyEmail(contacts.email);
                 emailVerified = verification.valid;
                 emailStatus = verification.status;
-                saveLog(jobId, emailVerified ? 'success' : 'warning', `${emailVerified ? '✅' : '⚠️'} HUNTER.IO: ${emailStatus || 'unverified'}`);
+                await saveLog(jobId, emailVerified ? 'success' : 'warning', `${emailVerified ? '✅' : '⚠️'} HUNTER.IO: ${emailStatus || 'unverified'}`);
               }
 
               // Cross-job email dedup
@@ -1834,7 +1834,7 @@ app.post('/api/search', async (req, res) => {
                 const emailExists = await db.prepare('SELECT id FROM intent_leads WHERE email = ? AND job_id != ?').get(contacts.email, jobId);
                 if (emailExists) {
                   isDuplicate = 1;
-                  saveLog(jobId, 'warning', `♻️ DUPLICATE email: ${contacts.email}`);
+                  await saveLog(jobId, 'warning', `♻️ DUPLICATE email: ${contacts.email}`);
                 }
               }
 
@@ -1857,7 +1857,7 @@ app.post('/api/search', async (req, res) => {
                   city, 'craigslist', listing.url, new Date().toISOString(), isDuplicate
                 );
               } catch (dbErr) {
-                saveLog(jobId, 'warning', `⚠️ DB insert skipped (dupe URL)`);
+                await saveLog(jobId, 'warning', `⚠️ DB insert skipped (dupe URL)`);
                 totalCount--;
                 continue;
               }
@@ -1868,14 +1868,14 @@ app.post('/api/search', async (req, res) => {
               if (emailVerified && isDuplicate === 0) {
                 verifiedCount++;
                 await db.prepare('UPDATE scrape_jobs SET verified_count = ? WHERE id = ?').run(verifiedCount, jobId);
-                saveLog(jobId, 'success', `✅ VERIFIED LEAD #${verifiedCount}: ${contacts.name || 'Craigslist Poster'} | ${contacts.email}`);
+                await saveLog(jobId, 'success', `✅ VERIFIED LEAD #${verifiedCount}: ${contacts.name || 'Craigslist Poster'} | ${contacts.email}`);
               }
 
               await new Promise(r => setTimeout(r, 500));
             }
 
           } catch (error) {
-            saveLog(jobId, 'error', `❌ ${city}: ${error.message}`);
+            await saveLog(jobId, 'error', `❌ ${city}: ${error.message}`);
           }
           await new Promise(r => setTimeout(r, 500));
         }
@@ -1888,13 +1888,13 @@ app.post('/api/search', async (req, res) => {
         `UPDATE scrape_jobs SET status = 'complete', verified_count = ?, total_count = ?, completed_at = CURRENT_TIMESTAMP WHERE id = ?`
       ).run(verifiedCount, totalCount, jobId);
 
-      saveLog(jobId, 'success', `\n🎯 SEARCH COMPLETE! Verified: ${verifiedCount} / ${targetLeads} | Total processed: ${totalCount}`);
+      await saveLog(jobId, 'success', `\n🎯 SEARCH COMPLETE! Verified: ${verifiedCount} / ${targetLeads} | Total processed: ${totalCount}`);
 
     } catch (fatalErr) {
       console.error('Search background fatal:', fatalErr);
       try {
         await db.prepare(`UPDATE scrape_jobs SET status = 'error', completed_at = CURRENT_TIMESTAMP WHERE id = ?`).run(jobId);
-        saveLog(jobId, 'error', `❌ Fatal background error: ${fatalErr.message}`);
+        await saveLog(jobId, 'error', `❌ Fatal background error: ${fatalErr.message}`);
       } catch(e) {}
     }
   });
