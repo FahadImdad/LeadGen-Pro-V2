@@ -520,13 +520,19 @@
         return;
       }
 
+      // Auto-load most recent completed job's leads if table is empty
+      const latestDone = filtered.find(j => j.status === 'complete' || j.status === 'error');
+      if (latestDone && amazonLeads.length === 0 && framework === 'amazon') {
+        loadAmazonLeadsFromJob(latestDone.id);
+      }
+
       container.innerHTML = filtered.map(job => {
         const isRunning = job.status === 'running';
         const isDone = job.status === 'complete' || job.status === 'cancelled' || job.status === 'error';
         const minimized = _minimized[job.id] !== false && isDone; // done tasks minimized by default
         const fw = job.framework === 'amazon' ? '📚 Amazon' : '📡 Intent';
         return `
-        <div class="bg-gray-800 border border-gray-700 rounded-lg mb-3" id="task-card-${job.id}">
+        <div class="bg-gray-800 border border-gray-700 rounded-lg mb-3" id="task-card-${job.id}" data-framework="${framework}" data-jobid="${job.id}">
           <!-- Task Header -->
           <div class="flex items-start gap-2 px-3 py-3 sm:px-4">
             <div class="flex-1 min-w-0">
@@ -576,6 +582,17 @@
         detail.style.display = hidden ? 'block' : 'none';
         btn.textContent = hidden ? '▼' : '▲';
         _minimized[jobId] = !hidden;
+        // When expanding, auto-load leads into the main table
+        if (hidden) {
+          const card = document.getElementById(`task-card-${jobId}`);
+          const fw = card?.dataset?.framework || 'amazon';
+          viewJob(jobId, fw);
+          // Scroll to leads table
+          setTimeout(() => {
+            const tableEl = document.getElementById('amazonResultsTable') || document.getElementById('resultsTable');
+            if (tableEl) tableEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          }, 300);
+        }
       }
     }
 
@@ -714,11 +731,12 @@
               amazonStats.books = total;
               amazonStats.emails = verified;
               updateAmazonStats();
-              // Live update: only reload table if new verified leads came in
+              // Live update: only reload table if new verified leads came in (debounced)
               if (verified > (window._lastAmazonVerified || 0)) {
                 window._lastAmazonVerified = verified;
                 document.getElementById('amazonExportBar').classList.remove('hidden');
-                loadAmazonLeadsFromJob(data.job.id);
+                clearTimeout(window._amazonLoadTimer);
+                window._amazonLoadTimer = setTimeout(() => loadAmazonLeadsFromJob(data.job.id), 1000);
               }
             }
 
