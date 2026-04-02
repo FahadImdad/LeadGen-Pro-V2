@@ -709,25 +709,92 @@ function isLikelyAuthorEmail(email, authorName) {
   return false;
 }
 
-// Amazon base URLs — each supports pagination via ?pg=N (up to 5 pages = 250 books per category)
+// Amazon category URLs — 80+ categories × 2 pages × ~40 books = ~6,400 unique books per cycle
 const AMAZON_BASE_URLS = [
-  'https://www.amazon.com/gp/new-releases/books',           // All new releases
-  'https://www.amazon.com/best-sellers-books-Amazon/zgbs/books/2635',      // Business
+  // New Releases
+  'https://www.amazon.com/gp/new-releases/books',
+  // Top-level categories
+  'https://www.amazon.com/best-sellers-books-Amazon/zgbs/books/2635',      // Business & Money
   'https://www.amazon.com/best-sellers-books-Amazon/zgbs/books/4736',      // Self Help
-  'https://www.amazon.com/best-sellers-books-Amazon/zgbs/books/6',         // Health
+  'https://www.amazon.com/best-sellers-books-Amazon/zgbs/books/6',         // Health/Fitness
   'https://www.amazon.com/best-sellers-books-Amazon/zgbs/books/486994011', // Biographies
   'https://www.amazon.com/best-sellers-books-Amazon/zgbs/books/22',        // Religion
   'https://www.amazon.com/best-sellers-books-Amazon/zgbs/books/4919',      // Parenting
-  'https://www.amazon.com/best-sellers-books-Amazon/zgbs/books/75',        // Science
+  'https://www.amazon.com/best-sellers-books-Amazon/zgbs/books/75',        // Science & Math
   'https://www.amazon.com/best-sellers-books-Amazon/zgbs/books/9',         // History
-  'https://www.amazon.com/best-sellers-books-Amazon/zgbs/books/11232',     // Politics
+  'https://www.amazon.com/best-sellers-books-Amazon/zgbs/books/11232',     // Politics/Social
   'https://www.amazon.com/best-sellers-books-Amazon/zgbs/books/2642',      // Travel
   'https://www.amazon.com/best-sellers-books-Amazon/zgbs/books/4677',      // Education
   'https://www.amazon.com/best-sellers-books-Amazon/zgbs/books/3',         // Children
   'https://www.amazon.com/best-sellers-books-Amazon/zgbs/books/4',         // Computers
   'https://www.amazon.com/best-sellers-books-Amazon/zgbs/books/173507',    // Arts & Photography
+  'https://www.amazon.com/best-sellers-books-Amazon/zgbs/books/3510',      // Romance
+  'https://www.amazon.com/best-sellers-books-Amazon/zgbs/books/25',        // Computers/Technology
+  'https://www.amazon.com/best-sellers-books-Amazon/zgbs/books/156012011', // Business Finance
+  // Business subcategories
+  'https://www.amazon.com/best-sellers-books-Amazon/zgbs/books/2501',      // Entrepreneurship
+  'https://www.amazon.com/best-sellers-books-Amazon/zgbs/books/2579',      // Leadership
+  'https://www.amazon.com/best-sellers-books-Amazon/zgbs/books/2558',      // Marketing
+  'https://www.amazon.com/best-sellers-books-Amazon/zgbs/books/2546',      // Management
+  'https://www.amazon.com/best-sellers-books-Amazon/zgbs/books/2533',      // Investing
+  'https://www.amazon.com/best-sellers-books-Amazon/zgbs/books/2531',      // Personal Finance
+  'https://www.amazon.com/best-sellers-books-Amazon/zgbs/books/2638',      // Real Estate
+  // Self Help subcategories
+  'https://www.amazon.com/best-sellers-books-Amazon/zgbs/books/4507',      // Motivational
+  'https://www.amazon.com/best-sellers-books-Amazon/zgbs/books/4508',      // Happiness
+  'https://www.amazon.com/best-sellers-books-Amazon/zgbs/books/4734',      // Anxiety & Phobias
+  'https://www.amazon.com/best-sellers-books-Amazon/zgbs/books/4740',      // Success
+  'https://www.amazon.com/best-sellers-books-Amazon/zgbs/books/4744',      // Relationships
+  // Health subcategories
+  'https://www.amazon.com/best-sellers-books-Amazon/zgbs/books/6',         // Health
+  'https://www.amazon.com/best-sellers-books-Amazon/zgbs/books/10',        // Diet & Weight Loss
+  'https://www.amazon.com/best-sellers-books-Amazon/zgbs/books/11',        // Exercise & Fitness
+  'https://www.amazon.com/best-sellers-books-Amazon/zgbs/books/12',        // Mental Health
+  'https://www.amazon.com/best-sellers-books-Amazon/zgbs/books/13',        // Nutrition
+  // Religion subcategories
+  'https://www.amazon.com/best-sellers-books-Amazon/zgbs/books/12290',     // Christianity
+  'https://www.amazon.com/best-sellers-books-Amazon/zgbs/books/12293',     // Islam
+  'https://www.amazon.com/best-sellers-books-Amazon/zgbs/books/12292',     // Judaism
+  'https://www.amazon.com/best-sellers-books-Amazon/zgbs/books/12291',     // Spirituality
+  // Fiction genres
+  'https://www.amazon.com/best-sellers-books-Amazon/zgbs/books/10672',     // Literature & Fiction
+  'https://www.amazon.com/best-sellers-books-Amazon/zgbs/books/49',        // Mystery & Thriller
+  'https://www.amazon.com/best-sellers-books-Amazon/zgbs/books/48',        // Science Fiction
+  'https://www.amazon.com/best-sellers-books-Amazon/zgbs/books/47',        // Fantasy
+  'https://www.amazon.com/best-sellers-books-Amazon/zgbs/books/3510',      // Romance
+  'https://www.amazon.com/best-sellers-books-Amazon/zgbs/books/695398',    // Historical Fiction
+  // Nonfiction categories
+  'https://www.amazon.com/best-sellers-books-Amazon/zgbs/books/53',        // True Crime
+  'https://www.amazon.com/best-sellers-books-Amazon/zgbs/books/54',        // Science & Technology
+  'https://www.amazon.com/best-sellers-books-Amazon/zgbs/books/55',        // Nature
+  'https://www.amazon.com/best-sellers-books-Amazon/zgbs/books/56',        // Sports & Outdoors
+  'https://www.amazon.com/best-sellers-books-Amazon/zgbs/books/57',        // Crafts & Hobbies
+  'https://www.amazon.com/best-sellers-books-Amazon/zgbs/books/58',        // Cooking
+  'https://www.amazon.com/best-sellers-books-Amazon/zgbs/books/59',        // Humor
+  'https://www.amazon.com/best-sellers-books-Amazon/zgbs/books/60',        // Graphic Novels
+  'https://www.amazon.com/best-sellers-books-Amazon/zgbs/books/61',        // Gay & Lesbian
+  // Memoir/Biography subcategories
+  'https://www.amazon.com/best-sellers-books-Amazon/zgbs/books/486994011', // Biographies
+  'https://www.amazon.com/best-sellers-books-Amazon/zgbs/books/700200',    // Memoirs
+  'https://www.amazon.com/best-sellers-books-Amazon/zgbs/books/700201',    // Specific Groups
+  // Teen & Young Adult
+  'https://www.amazon.com/best-sellers-books-Amazon/zgbs/books/28',        // Teen & Young Adult
+  'https://www.amazon.com/best-sellers-books-Amazon/zgbs/books/155009011', // YA Fiction
+  // Professional & Technical
+  'https://www.amazon.com/best-sellers-books-Amazon/zgbs/books/173514',    // Law
+  'https://www.amazon.com/best-sellers-books-Amazon/zgbs/books/173513',    // Medical
+  'https://www.amazon.com/best-sellers-books-Amazon/zgbs/books/173512',    // Engineering
+  // Arts & Creativity
+  'https://www.amazon.com/best-sellers-books-Amazon/zgbs/books/173507',    // Arts & Photography
+  'https://www.amazon.com/best-sellers-books-Amazon/zgbs/books/298471',    // Music
+  'https://www.amazon.com/best-sellers-books-Amazon/zgbs/books/17',        // Architecture
+  // Additional
+  'https://www.amazon.com/best-sellers-books-Amazon/zgbs/books/7',         // Parenting & Families
+  'https://www.amazon.com/best-sellers-books-Amazon/zgbs/books/8',         // Reference
+  'https://www.amazon.com/best-sellers-books-Amazon/zgbs/books/14',        // Comics & Graphic Novels
+  'https://www.amazon.com/best-sellers-books-Amazon/zgbs/books/15',        // Calendars
 ];
-const MAX_PAGES_PER_URL = 2; // Amazon new-releases/best-sellers support up to 2 pages
+const MAX_PAGES_PER_URL = 2; // Amazon bestseller pages support up to 2 pages (pg=3 returns empty)
 
 function buildAmazonUrl(dateFrom, dateTo, page = 1) { return null; }
 
@@ -837,22 +904,23 @@ async function scrapeAmazonBooks(targetLeads, dateFrom, dateTo, sendEvent) {
   return books;
 }
 
-// Find author contact info — all sources run in parallel with early exit
+// Find author contact info — sequential with early exit to avoid connection exhaustion
 async function findAuthorContact(authorName, bookTitle, saveLog) {
+  // Skip unknown authors — no point searching for "Unknown"
+  if (!authorName || authorName === 'Unknown' || authorName.trim().length < 3) {
+    saveLog('info', `⏩ Skipping unknown author`);
+    return { email: null, website: null };
+  }
+
   const emailRegex = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g;
   const firstName = authorName.split(' ')[0].toLowerCase();
   const lastName = authorName.split(' ').slice(-1)[0].toLowerCase();
   const nameSlug = authorName.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
-  const nameUnderscore = authorName.toLowerCase().replace(/\s+/g, '_');
 
-  function extractEmails(html, validateAgainstAuthor = false) {
+  function extractEmails(html) {
     const raw = (html.match(emailRegex) || []).filter(e => !isBlockedEmail(e));
-    if (validateAgainstAuthor) {
-      // Prefer emails that contain author name
-      const authorEmails = raw.filter(e => isLikelyAuthorEmail(e, authorName));
-      return authorEmails.length > 0 ? authorEmails : raw;
-    }
-    return raw;
+    const authorEmails = raw.filter(e => isLikelyAuthorEmail(e, authorName));
+    return authorEmails.length > 0 ? authorEmails : raw;
   }
 
   function extractRealWebsites(html) {
@@ -864,81 +932,45 @@ async function findAuthorContact(authorName, bookTitle, saveLog) {
     return [...new Set(candidates)].sort((a,b) => a.length - b.length);
   }
 
-  async function fetchEmails(url, validateAuthor = false) {
+  async function fetchEmails(url) {
     try {
       const html = await scrapeWithBrightData(url);
       if (!html) return { email: null, website: null, html: null };
-      const emails = extractEmails(html, validateAuthor);
+      const emails = extractEmails(html);
       const sites = extractRealWebsites(html);
       return { email: emails[0] || null, website: sites[0] || null, html };
     } catch(e) { return { email: null, website: null, html: null }; }
   }
 
-  // ── PHASE 1: Parallel scan — 14 sources simultaneously ───────────────
-  saveLog('info', `⚡ Parallel scanning 14 sources for ${authorName}...`);
-
+  saveLog('info', `🔍 Searching contact for ${authorName}...`);
   const encodedName = encodeURIComponent(authorName);
 
-  const [
-    googleR1, googleR2, googleR3, googleDirectEmail,
-    bingR1, bingR2, ddgR,
-    amazonBookR, amazonAuthorR,
-    igR, reedsyR, grR,
-    yahooR, pressR
-  ] = await Promise.all([
-    // Google x3 — validate email against author name
-    fetchEmails(`https://www.google.com/search?q=${encodeURIComponent(`"${authorName}" author email contact`)}&num=10`, true),
-    fetchEmails(`https://www.google.com/search?q=${encodeURIComponent(`"${authorName}" author official website`)}&num=10`, true),
-    fetchEmails(`https://www.google.com/search?q=${encodeURIComponent(`"${authorName}" "${bookTitle}" author`)}&num=10`, true),
-    // Google direct email
-    fetchEmails(`https://www.google.com/search?q=${encodeURIComponent(`"${authorName}" "@gmail.com" OR "@yahoo.com" OR "@hotmail.com" OR "@outlook.com"`)}&num=10`, true),
-    // Bing x2
-    fetchEmails(`https://www.bing.com/search?q=${encodeURIComponent(`"${authorName}" author email website contact`)}&count=10`, true),
-    fetchEmails(`https://www.bing.com/search?q=${encodeURIComponent(`"${authorName}" "${bookTitle}" author email`)}&count=10`, true),
-    // DuckDuckGo
-    fetchEmails(`https://html.duckduckgo.com/html/?q=${encodeURIComponent(`"${authorName}" author email contact`)}`, true),
-    // Amazon pages
-    fetchEmails(`https://www.amazon.com/s?k=${encodeURIComponent(authorName + ' ' + bookTitle)}&i=stripbooks`, true),
-    fetchEmails(`https://www.amazon.com/stores/author/${nameSlug}`, true),
-    // Instagram
-    fetchEmails(`https://www.instagram.com/${firstName}${lastName}.author/`, true),
-    // Reedsy
-    fetchEmails(`https://reedsy.com/discovery/user/${nameSlug}`, true),
-    // Goodreads
-    fetchEmails(`https://www.goodreads.com/search?q=${encodedName}&search_type=authors`, true),
-    // Yahoo
-    fetchEmails(`https://search.yahoo.com/search?p=${encodeURIComponent(`"${authorName}" author email website`)}`, true),
-    // Press/media
-    fetchEmails(`https://www.google.com/search?q=${encodeURIComponent(`"${authorName}" author "press" OR "media" OR "contact"`)}&num=10`, true),
-  ]);
+  // ── PHASE 1: Sequential search — stop as soon as we find email + website ──
+  // Order: most likely to yield results first. Each call is one Bright Data request.
+  const searchSources = [
+    `https://www.google.com/search?q=${encodeURIComponent(`"${authorName}" author email contact`)}&num=10`,
+    `https://www.google.com/search?q=${encodeURIComponent(`"${authorName}" author official website`)}&num=10`,
+    `https://html.duckduckgo.com/html/?q=${encodeURIComponent(`"${authorName}" author email contact`)}`,
+    `https://www.bing.com/search?q=${encodeURIComponent(`"${authorName}" author email website contact`)}&count=10`,
+    `https://www.goodreads.com/search?q=${encodedName}&search_type=authors`,
+  ];
 
-  // Collect any direct emails found across all sources
-  const allResults = [googleR1, googleR2, googleR3, googleDirectEmail, bingR1, bingR2, ddgR, amazonBookR, amazonAuthorR, igR, reedsyR, yahooR, pressR];
-  const directEmails = allResults.map(r => r?.email).filter(Boolean);
-  if (directEmails.length > 0) {
-    saveLog('success', `📧 Direct email found: ${directEmails[0]}`);
-    return { email: directEmails[0], website: allResults.find(r=>r?.website)?.website || null };
+  let foundEmail = null;
+  let foundWebsite = null;
+
+  for (const url of searchSources) {
+    const result = await fetchEmails(url);
+    if (result.email && !foundEmail) foundEmail = result.email;
+    if (result.website && !foundWebsite) foundWebsite = result.website;
+    if (foundEmail) break; // early exit — got what we need
   }
 
-  // Collect all websites from all sources
-  const allWebsites = [...allResults, grR]
-    .flatMap(r => [r?.website, ...(r?.html ? extractRealWebsites(r.html) : [])])
-    .filter(Boolean)
-    .filter(isRealAuthorWebsite);
-  const uniqueWebsites = [...new Set(allWebsites)].slice(0, 8);
+  if (foundEmail) {
+    saveLog('success', `📧 Direct email found: ${foundEmail}`);
+    return { email: foundEmail, website: foundWebsite };
+  }
 
-  // ── PHASE 1b: Try common email patterns and verify ────────────────────
-  // Many authors use predictable email patterns — try and verify instantly
-  const commonPatterns = [
-    `${firstName}@${firstName}${lastName}.com`,
-    `${firstName}.${lastName}@gmail.com`,
-    `${firstName}${lastName}@gmail.com`,
-    `contact@${firstName}${lastName}.com`,
-    `hello@${firstName}${lastName}.com`,
-    `${firstName}@${firstName}${lastName}author.com`,
-  ];
-  // Only try domain-based patterns (e.g. john@johnsmith.com) — NOT gmail/yahoo/hotmail
-  // because those can match any random person with the same name
+  // ── PHASE 1b: Try predictable domain-based email patterns via Hunter verify ──
   const domainPatterns = [
     `${firstName}@${firstName}${lastName}.com`,
     `contact@${firstName}${lastName}.com`,
@@ -947,55 +979,43 @@ async function findAuthorContact(authorName, bookTitle, saveLog) {
     `${firstName}@${firstName}${lastName}author.com`,
     `${firstName}.${lastName}@${firstName}${lastName}.com`,
   ].filter(e => {
-    // Only use if the domain looks like a real author domain (contains their name)
     const domain = e.split('@')[1] || '';
     return domain.includes(firstName) || domain.includes(lastName);
   });
 
-  if (domainPatterns.length > 0) {
-    const patternResults = await Promise.all(
-      domainPatterns.map(async email => {
-        try {
-          const r = await axios.get(`https://api.hunter.io/v2/email-verifier?email=${encodeURIComponent(email)}&api_key=${HUNTER_API_KEY}`, { timeout: 5000 });
-          const status = r.data?.data?.status;
-          // Only accept 'valid' — not 'accept_all' (accept_all = server accepts all emails, can't confirm person)
-          if (status === 'valid') return { email, status };
-        } catch(e) {}
-        return null;
-      })
-    );
-    const patternEmail = patternResults.find(r => r?.email);
-    if (patternEmail) {
-      saveLog('success', `📧 Domain pattern email verified: ${patternEmail.email}`);
-      return { email: patternEmail.email, website: uniqueWebsites[0] || null };
-    }
+  for (const email of domainPatterns) {
+    try {
+      const r = await axios.get(`https://api.hunter.io/v2/email-verifier?email=${encodeURIComponent(email)}&api_key=${HUNTER_API_KEY}`, { timeout: 8000 });
+      const status = r.data?.data?.status;
+      if (status === 'valid') {
+        saveLog('success', `📧 Domain pattern verified: ${email}`);
+        return { email, website: foundWebsite };
+      }
+    } catch(e) {}
   }
 
-  if (uniqueWebsites.length === 0) {
+  if (!foundWebsite) {
     saveLog('info', `⏩ No online presence found for ${authorName} — skipping`);
     return { email: null, website: null };
   }
 
-  // ── PHASE 2: Parallel visit of all found websites ─────────────────────
-  saveLog('info', `🌐 Visiting ${uniqueWebsites.length} websites in parallel...`);
+  // ── PHASE 2: Visit found website's contact/about pages (up to 3) ──────
+  saveLog('info', `🌐 Checking website for ${authorName}: ${foundWebsite}`);
+  const contactPages = [
+    foundWebsite.replace(/\/$/, '') + '/contact',
+    foundWebsite.replace(/\/$/, '') + '/about',
+    foundWebsite,
+  ];
 
-  const contactPages = uniqueWebsites.flatMap(site => [
-    site.replace(/\/$/, '') + '/contact',
-    site.replace(/\/$/, '') + '/contact-me',
-    site.replace(/\/$/, '') + '/about',
-    site,
-  ]).slice(0, 10);
-
-  const pageResults = await Promise.all(contactPages.map(url => fetchEmails(url, true)));
-  const siteEmail = pageResults.find(r => r?.email)?.email || null;
-  const foundWebsite = uniqueWebsites[0];
-
-  if (siteEmail) {
-    saveLog('success', `📧 Email found on website: ${siteEmail}`);
-    return { email: siteEmail, website: foundWebsite };
+  for (const url of contactPages) {
+    const result = await fetchEmails(url);
+    if (result.email) {
+      saveLog('success', `📧 Email found on website: ${result.email}`);
+      return { email: result.email, website: foundWebsite };
+    }
   }
 
-  // ── PHASE 3: Hunter.io finder + domain search in parallel ─────────────
+  // ── PHASE 3: Hunter.io finder + domain search ─────────────────────────
   if (foundWebsite && HUNTER_API_KEY) {
     saveLog('hunter', `🎯 Hunter: finder + domain search for ${authorName}...`);
     const domain = new URL(foundWebsite).hostname.replace(/^www\./, '');
@@ -1236,8 +1256,8 @@ app.post('/api/amazon', async (req, res) => {
           if (pageBooks.length === 0) { consecutiveEmpty++; if(consecutiveEmpty>=3) { page_num = maxPages + 1; } continue; }
           consecutiveEmpty = 0;
 
-          // Concurrency pool — always keep CONCURRENCY slots busy
-          const CONCURRENCY = 30;
+          // Concurrency pool — keep CONCURRENCY slots busy (low to avoid connection exhaustion)
+          const CONCURRENCY = 5;
           saveLog(jobId, 'info', `⚡ Processing ${pageBooks.length} authors with ${CONCURRENCY} concurrent workers...`);
 
           // Filter out already-seen ASINs (both DB and current run)
@@ -1281,9 +1301,15 @@ app.post('/api/amazon', async (req, res) => {
             if (verifiedCount >= targetLeads) return;
 
             const title = book.title || 'Unknown Title';
-            const author = book.author || 'Unknown Author';
+            const author = book.author || 'Unknown';
             const asin = book.asin;
             const amazonUrl = `https://www.amazon.com/dp/${asin}`;
+
+            // Skip unknown authors — can't find contact info for them
+            if (!author || author === 'Unknown' || author.trim().length < 3) {
+              saveLog(jobId, 'info', `⏭️ SKIP (unknown author): ${title.substring(0, 50)}`);
+              return;
+            }
 
             // ASIN dedup — skip entirely if already in DB
             const asinExists = db.prepare('SELECT id FROM amazon_leads WHERE asin = ?').get(asin);
