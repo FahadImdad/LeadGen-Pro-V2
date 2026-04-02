@@ -933,36 +933,38 @@ async function findAuthorContact(authorName, bookTitle, saveLog) {
 
   saveLog('info', `🔍 ${authorName}...`);
 
-  // ── FAST PATH: Guess author's domain directly (no search needed) ──────
-  // Try howardpartridge.com, howardpartridgeauthor.com etc — if exists, get email immediately
+  // ── FAST PATH: Guess author's domain — all 3 in parallel ──────────────
   const guessDomains = [
     `${firstName}${lastName}.com`,
     `${firstName}${lastName}author.com`,
     `${nameSlug}.com`,
   ];
-  for (const domain of guessDomains) {
+  const fastResults = await Promise.all(guessDomains.map(async domain => {
     try {
       const html = await scrapeWithBrightData(`https://${domain}`);
-      if (!html || html.length < 500) continue;
-      if (!nameParts.some(p => html.toLowerCase().includes(p))) continue;
+      if (!html || html.length < 500) return null;
+      if (!nameParts.some(p => html.toLowerCase().includes(p))) return null;
       const emails = extractEmails(html);
-      if (emails.length > 0) {
-        saveLog('success', `📧 Fast: ${emails[0]} (${domain})`);
-        return { email: emails[0], website: `https://${domain}` };
-      }
-      // Site exists, no email on homepage — try /contact once
+      if (emails.length > 0) return { email: emails[0], website: `https://${domain}` };
+      // No email on homepage — try /contact
       const ch = await scrapeWithBrightData(`https://${domain}/contact`);
       if (ch) {
         const ce = extractEmails(ch);
-        if (ce.length > 0) { saveLog('success', `📧 Fast /contact: ${ce[0]}`); return { email: ce[0], website: `https://${domain}` }; }
+        if (ce.length > 0) return { email: ce[0], website: `https://${domain}` };
       }
       // Hunter on this domain
       if (HUNTER_API_KEY) {
         const r = await axios.get(`https://api.hunter.io/v2/email-finder?domain=${domain}&first_name=${encodeURIComponent(firstName)}&last_name=${encodeURIComponent(lastName)}&api_key=${HUNTER_API_KEY}`, { timeout: 8000 }).catch(() => null);
         const e = r?.data?.data?.email;
-        if (e) { saveLog('success', `📧 Hunter fast: ${e}`); return { email: e, website: `https://${domain}` }; }
+        if (e) return { email: e, website: `https://${domain}` };
       }
-    } catch(e) {}
+      return { email: null, website: `https://${domain}` }; // site found, no email
+    } catch(e) { return null; }
+  }));
+  const fastHit = fastResults.find(r => r?.email);
+  if (fastHit) {
+    saveLog('success', `📧 Fast: ${fastHit.email}`);
+    return fastHit;
   }
 
   // ── PHASE 1: Single Google search to find author website ─────────────
@@ -1228,7 +1230,7 @@ app.post('/api/amazon', async (req, res) => {
           consecutiveEmpty = 0;
 
           // Concurrency pool — keep CONCURRENCY slots busy
-          const CONCURRENCY = 15;
+          const CONCURRENCY = 25;
           saveLog(jobId, 'info', `⚡ Processing ${pageBooks.length} authors with ${CONCURRENCY} concurrent workers...`);
 
           // Filter out already-seen ASINs (both DB and current run)
