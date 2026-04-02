@@ -28,6 +28,7 @@ _db.exec(`
     author TEXT,
     book_title TEXT,
     publish_date TEXT,
+    review_count INTEGER DEFAULT 0,
     email TEXT,
     email_verified INTEGER DEFAULT 0,
     email_status TEXT,

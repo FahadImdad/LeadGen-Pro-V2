@@ -790,10 +790,12 @@ function parseAmazonNewReleasesHtml(html) {
     const asin = asinM ? asinM[asinM.length - 1].replace('/dp/', '').replace('/', '') : null;
     if (!asin) continue;
 
-    // Look forward 600 chars for author — two patterns:
+    // Look forward 800 chars for author, reviews, date
+    const after = html.substring(m.index + m[0].length, m.index + m[0].length + 800);
+
+    // Author — two patterns:
     // 1. <span class="a-size-base">by </span><span ...>AUTHOR</span>  (plain text author)
     // 2. <span class="a-size-base">by </span><a ...>AUTHOR</a>         (linked author)
-    const after = html.substring(m.index + m[0].length, m.index + m[0].length + 600);
     const authorM = after.match(/by <\/span><span[^>]*>([^<]{2,80})<\/span>/) ||
                     after.match(/by <\/span><a[^>]*>([^<]{2,80})<\/a>/);
     const author = authorM ? decodeEntities(authorM[1]) : 'Unknown';
@@ -802,7 +804,15 @@ function parseAmazonNewReleasesHtml(html) {
     const dateM = after.match(/a-color-secondary a-text-normal">([^<]{4,30})<\/span>/);
     const publishDate = dateM ? decodeEntities(dateM[1]) : '';
 
-    books.push({ asin, title, author, publishDate, amazonUrl: `https://www.amazon.com/dp/${asin}` });
+    // Review count — aria-label="X ratings" or popoverLabel "X out of 5 stars"
+    // Also check the before chunk (ratings sometimes appear before title in HTML order)
+    const fullArea = before.substring(before.length - 500) + after;
+    const reviewM = fullArea.match(/aria-label="([\d,]+) ratings?"/i) ||
+                    fullArea.match(/"([\d,]+) global ratings?"/i) ||
+                    fullArea.match(/(\d+)\s*customer reviews?/i);
+    const reviewCount = reviewM ? parseInt(reviewM[1].replace(/,/g, '')) : 0;
+
+    books.push({ asin, title, author, publishDate, reviewCount, amazonUrl: `https://www.amazon.com/dp/${asin}` });
   }
 
   return books;
@@ -894,6 +904,7 @@ async function findAuthorContact(authorName, bookTitle, saveLog) {
   const firstName = authorName.split(' ')[0].toLowerCase();
   const lastName = authorName.split(' ').slice(-1)[0].toLowerCase();
   const nameSlug = authorName.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
+  const nameParts = authorName.toLowerCase().replace(/[^a-z\s]/g, '').split(/\s+/).filter(p => p.length > 2);
 
   function extractEmails(html) {
     const raw = (html.match(emailRegex) || []).filter(e => !isBlockedEmail(e));
@@ -923,28 +934,53 @@ async function findAuthorContact(authorName, bookTitle, saveLog) {
   saveLog('info', `🔍 Searching contact for ${authorName}...`);
   const encodedName = encodeURIComponent(authorName);
 
-  // ── PHASE 1: Sequential search — stop as soon as we find email + website ──
-  // Order: most likely to yield results first. Each call is one Bright Data request.
-  const searchSources = [
-    `https://www.google.com/search?q=${encodeURIComponent(`"${authorName}" author email contact`)}&num=10`,
+  // ── PHASE 1: Find author's own website via Google (website URL only, no email harvesting from search) ──
+  // We use Google only to DISCOVER the author's website URL, then visit the site directly.
+  // Emails found directly on search result pages are ignored — they could be anyone's.
+  let foundWebsite = null;
+
+  const websiteSearchSources = [
     `https://www.google.com/search?q=${encodeURIComponent(`"${authorName}" author official website`)}&num=10`,
-    `https://html.duckduckgo.com/html/?q=${encodeURIComponent(`"${authorName}" author email contact`)}`,
-    `https://www.bing.com/search?q=${encodeURIComponent(`"${authorName}" author email website contact`)}&count=10`,
-    `https://www.goodreads.com/search?q=${encodedName}&search_type=authors`,
+    `https://www.google.com/search?q=${encodeURIComponent(`"${authorName}" author site:*.com`)}&num=10`,
+    `https://html.duckduckgo.com/html/?q=${encodeURIComponent(`"${authorName}" author official website`)}`,
+  ];
+
+  for (const url of websiteSearchSources) {
+    try {
+      const html = await scrapeWithBrightData(url);
+      if (!html) continue;
+      const sites = extractRealWebsites(html);
+      // Only accept sites that contain the author's name in the domain
+      const authorSite = sites.find(s => {
+        try {
+          const host = new URL(s).hostname.toLowerCase().replace(/^www\./, '');
+          return nameParts.some(part => host.includes(part));
+        } catch { return false; }
+      }) || sites[0]; // fallback to first real site if none contain name
+      if (authorSite) { foundWebsite = authorSite; break; }
+    } catch(e) {}
+  }
+
+  // ── PHASE 1b: Also check common social media profiles ────────────────
+  // Instagram, Facebook author page — direct visit, extract email if visible
+  const SOCIAL_SOURCES = [
+    `https://www.instagram.com/${firstName}${lastName}/`,
+    `https://www.instagram.com/${firstName}.${lastName}/`,
+    `https://www.facebook.com/${firstName}${lastName}/`,
+    `https://www.facebook.com/${nameSlug}/`,
+    `https://twitter.com/${firstName}${lastName}`,
+    `https://reedsy.com/discovery/user/${nameSlug}`,
   ];
 
   let foundEmail = null;
-  let foundWebsite = null;
-
-  for (const url of searchSources) {
+  for (const url of SOCIAL_SOURCES) {
     const result = await fetchEmails(url);
-    if (result.email && !foundEmail) foundEmail = result.email;
+    if (result.email) { foundEmail = result.email; break; }
     if (result.website && !foundWebsite) foundWebsite = result.website;
-    if (foundEmail) break; // early exit — got what we need
   }
 
   if (foundEmail) {
-    saveLog('success', `📧 Direct email found: ${foundEmail}`);
+    saveLog('success', `📧 Email found on social media: ${foundEmail}`);
     return { email: foundEmail, website: foundWebsite };
   }
 
@@ -1077,8 +1113,8 @@ app.get('/api/export/:jobId', (req, res) => {
   let leads, headers, rows;
   if (framework === 'amazon') {
     leads = db.prepare(`SELECT * FROM amazon_leads WHERE job_id = ? ${verifiedFilter} ORDER BY id`).all(jobId);
-    headers = ['#','Author','Book Title','Published','Email','Email Status','Website','Amazon URL','Scraped At'];
-    rows = leads.map((l,i) => [i+1, l.author, l.book_title, l.publish_date||'', l.email||'', l.email_status||'', l.website||'', l.amazon_url, l.scraped_at]);
+    headers = ['#','Author','Book Title','Published','Reviews','Email','Email Status','Website','Amazon URL','Scraped At'];
+    rows = leads.map((l,i) => [i+1, l.author, l.book_title, l.publish_date||'', l.review_count||0, l.email||'', l.email_status||'', l.website||'', l.amazon_url, l.scraped_at]);
   } else {
     leads = db.prepare(`SELECT * FROM intent_leads WHERE job_id = ? ${verifiedFilter} ORDER BY id`).all(jobId);
     headers = ['#','Name','Title','Email','Email Status','Phone','WhatsApp','Budget','City','Source','URL','Posted Date','Scraped At'];
@@ -1289,6 +1325,13 @@ app.post('/api/amazon', async (req, res) => {
               return;
             }
 
+            // Review filter — skip books with more than 10 reviews (already established authors)
+            const MAX_REVIEWS = 10;
+            if (book.reviewCount > MAX_REVIEWS) {
+              saveLog(jobId, 'info', `⏭️ SKIP (${book.reviewCount} reviews > ${MAX_REVIEWS}): ${title.substring(0, 50)}`);
+              return;
+            }
+
             // ASIN dedup — skip entirely if already in DB
             const asinExists = db.prepare('SELECT id FROM amazon_leads WHERE asin = ?').get(asin);
             if (asinExists) {
@@ -1296,7 +1339,14 @@ app.post('/api/amazon', async (req, res) => {
               return;
             }
 
-            saveLog(jobId, 'info', `📚 Processing: "${title}" by ${author}`);
+            // Author dedup — skip if we already found this author in any job
+            const authorExists = db.prepare('SELECT id FROM amazon_leads WHERE author = ? AND email IS NOT NULL').get(author);
+            if (authorExists) {
+              saveLog(jobId, 'info', `⏭️ SKIP (author already processed): ${author}`);
+              return;
+            }
+
+            saveLog(jobId, 'info', `📚 Processing: "${title}" by ${author} (${book.reviewCount || 0} reviews)`);
             totalCount++;
 
             // Find author contact
@@ -1329,9 +1379,9 @@ app.post('/api/amazon', async (req, res) => {
             // Save to DB regardless
             try {
               db.prepare(
-                `INSERT INTO amazon_leads (job_id, author, book_title, publish_date, email, email_verified, email_status, website, amazon_url, asin, is_duplicate)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-              ).run(jobId, author, title, book.publishDate || null, email || null, emailVerified ? 1 : 0, emailStatus, hasRealWebsite ? website : null, amazonUrl, asin, isDuplicate);
+                `INSERT INTO amazon_leads (job_id, author, book_title, publish_date, review_count, email, email_verified, email_status, website, amazon_url, asin, is_duplicate)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+              ).run(jobId, author, title, book.publishDate || null, book.reviewCount || 0, email || null, emailVerified ? 1 : 0, emailStatus, hasRealWebsite ? website : null, amazonUrl, asin, isDuplicate);
             } catch (dbErr) {
               // UNIQUE constraint hit (race condition) — skip
               saveLog(jobId, 'warning', `⚠️ DB insert skipped (dupe): ${asin}`);
