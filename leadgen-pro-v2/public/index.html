@@ -422,6 +422,7 @@
               <th class="px-4 py-3 text-left text-sm">Author</th>
               <th class="px-4 py-3 text-left text-sm">Book Title</th>
               <th class="px-4 py-3 text-left text-sm">Published</th>
+              <th class="px-4 py-3 text-left text-sm">Reviews</th>
               <th class="px-4 py-3 text-left text-sm">Email</th>
               <th class="px-4 py-3 text-left text-sm">Website</th>
               <th class="px-4 py-3 text-left text-sm">Amazon Link</th>
@@ -429,7 +430,7 @@
           </thead>
           <tbody id="amazonResultsTable">
             <tr>
-              <td colspan="7" class="px-4 py-8 text-center text-gray-500">
+              <td colspan="8" class="px-4 py-8 text-center text-gray-500">
                 Select a job above or start a new scrape
               </td>
             </tr>
@@ -672,7 +673,7 @@
         const res = await fetch(`/api/jobs/${jobId}/leads?framework=intent`);
         const leads = await res.json();
         const table = document.getElementById('resultsTable');
-        if (leads.length === 0) { table.innerHTML = `<tr><td colspan="7" class="px-4 py-8 text-center text-gray-500">No verified leads found for this job.</td></tr>`; return; }
+        if (leads.length === 0) { table.innerHTML = `<tr><td colspan="8" class="px-4 py-8 text-center text-gray-500">No verified leads found for this job.</td></tr>`; return; }
         table.innerHTML = '';
         allLeads = [];
         leads.forEach((l, i) => {
@@ -696,13 +697,13 @@
         const res = await fetch(`/api/jobs/${jobId}/leads?framework=amazon`);
         const leads = await res.json();
         const table = document.getElementById('amazonResultsTable');
-        if (leads.length === 0) { table.innerHTML = `<tr><td colspan="7" class="px-4 py-8 text-center text-gray-500">No verified leads found for this job.</td></tr>`; return; }
+        if (leads.length === 0) { table.innerHTML = `<tr><td colspan="8" class="px-4 py-8 text-center text-gray-500">No verified leads found for this job.</td></tr>`; return; }
         table.innerHTML = '';
         amazonLeads = [];
         leads.forEach((l, i) => {
           const lead = {
             id: i+1, author: l.author||'Unknown', bookTitle: l.book_title||'',
-            publishDate: l.publish_date||'', email: l.email, emailVerified: true,
+            publishDate: l.publish_date||'', reviewCount: l.review_count||0, email: l.email, emailVerified: true,
             emailStatus: l.email_status||'', website: l.website||'', amazonUrl: l.amazon_url, scrapedAt: l.scraped_at
           };
           amazonLeads.push(lead);
@@ -927,6 +928,9 @@
         <td class="px-4 py-3 text-sm font-medium text-white">${escapeHtml(lead.author || '')}</td>
         <td class="px-4 py-3 text-sm text-gray-300">${escapeHtml(bookTitle).substring(0, 50)}${bookTitle.length > 50 ? '...' : ''}</td>
         <td class="px-4 py-3 text-sm text-gray-400">${escapeHtml(lead.publishDate || lead.publish_date || '-')}</td>
+        <td class="px-4 py-3 text-sm text-center">
+          <span class="${(lead.reviewCount||lead.review_count||0) === 0 ? 'text-green-400' : 'text-yellow-400'} font-bold">${lead.reviewCount||lead.review_count||0}</span>
+        </td>
         <td class="px-4 py-3 text-sm">
           ${lead.email ? `<span class="text-green-400">📧 <span class="text-xs bg-green-900 text-green-300 px-1 rounded">✅ Verified</span> ${escapeHtml(lead.email)}</span>` : '<span class="text-gray-600">—</span>'}
         </td>
@@ -984,8 +988,8 @@
 
     function exportAmazonLeads() {
       if (amazonLeads.length === 0) { alert('No verified leads to export'); return; }
-      const headers = ['#','Author','Book Title','Published','Email','Email Status','Website','Amazon URL','Scraped At'];
-      const rows = amazonLeads.map((l, i) => [i+1, l.author, l.bookTitle||l.book_title, l.publishDate||l.publish_date||'', l.email||'', l.emailStatus||l.email_status||'verified', l.website||'', l.amazonUrl||l.amazon_url, l.scrapedAt||l.scraped_at]);
+      const headers = ['#','Author','Book Title','Published','Reviews','Email','Email Status','Website','Amazon URL','Scraped At'];
+      const rows = amazonLeads.map((l, i) => [i+1, l.author, l.bookTitle||l.book_title, l.publishDate||l.publish_date||'', l.reviewCount||l.review_count||0, l.email||'', l.emailStatus||l.email_status||'verified', l.website||'', l.amazonUrl||l.amazon_url, l.scrapedAt||l.scraped_at]);
       downloadCsv([headers, ...rows], `amazon_authors_${new Date().toISOString().split('T')[0]}.csv`);
     }
 
