@@ -13,6 +13,8 @@
     .tab-content.active { display: block; }
     .scrape-form { display: none; }
     .scrape-form.visible { display: block; }
+    .bg-gray-750 { background-color: #1f2937; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
   </style>
 </head>
 <body class="bg-gray-900 text-white min-h-screen">
@@ -415,27 +417,29 @@
 
       <!-- Amazon Results Table -->
       <div class="bg-gray-800 rounded-lg overflow-hidden">
-        <table class="w-full">
-          <thead class="bg-gray-700">
-            <tr>
-              <th class="px-4 py-3 text-left text-sm">#</th>
-              <th class="px-4 py-3 text-left text-sm">Author</th>
-              <th class="px-4 py-3 text-left text-sm">Book Title</th>
-              <th class="px-4 py-3 text-left text-sm">Published</th>
-              <th class="px-4 py-3 text-left text-sm">Reviews</th>
-              <th class="px-4 py-3 text-left text-sm">Email</th>
-              <th class="px-4 py-3 text-left text-sm">Website</th>
-              <th class="px-4 py-3 text-left text-sm">Amazon Link</th>
-            </tr>
-          </thead>
-          <tbody id="amazonResultsTable">
-            <tr>
-              <td colspan="8" class="px-4 py-8 text-center text-gray-500">
-                Select a job above or start a new scrape
-              </td>
-            </tr>
-          </tbody>
-        </table>
+        <div class="overflow-x-auto" style="max-height:520px;overflow-y:auto;">
+          <table class="w-full text-sm" id="amazonTable">
+            <thead class="bg-gray-700" style="position:sticky;top:0;z-index:10;">
+              <tr>
+                <th class="px-3 py-3 text-left text-xs text-gray-400 font-semibold w-10">#</th>
+                <th class="px-3 py-3 text-left text-xs text-gray-400 font-semibold min-w-32">Author</th>
+                <th class="px-3 py-3 text-left text-xs text-gray-400 font-semibold min-w-48">Book Title</th>
+                <th class="px-3 py-3 text-left text-xs text-gray-400 font-semibold w-24">Published</th>
+                <th class="px-3 py-3 text-center text-xs text-gray-400 font-semibold w-20">⭐ Reviews</th>
+                <th class="px-3 py-3 text-left text-xs text-gray-400 font-semibold min-w-48">Email</th>
+                <th class="px-3 py-3 text-left text-xs text-gray-400 font-semibold w-28">Website</th>
+                <th class="px-3 py-3 text-left text-xs text-gray-400 font-semibold w-20">Amazon</th>
+              </tr>
+            </thead>
+            <tbody id="amazonResultsTable">
+              <tr>
+                <td colspan="8" class="px-4 py-8 text-center text-gray-500">
+                  Select a task above or start a new scrape
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
       </div>
 
     </div><!-- end #content-amazon -->
@@ -570,6 +574,8 @@
     async function startPolling(jobId, framework) {
       lastLogId = 0;
       activeJobId = jobId;
+      window._lastAmazonVerified = 0;
+      window._lastIntentVerified = 0;
       clearInterval(pollInterval);
       pollInterval = setInterval(async () => {
         if (activeJobId !== jobId) { clearInterval(pollInterval); return; } // guard stale intervals
@@ -603,8 +609,11 @@
               stats.verified = verified;
               stats.contacts = total;
               updateStats();
-              // Live load leads into table as they come in
-              if (verified > 0) loadIntentLeadsFromJob(data.job.id);
+              // Live update: only reload if new leads since last render
+              if (verified > (window._lastIntentVerified || 0)) {
+                window._lastIntentVerified = verified;
+                loadIntentLeadsFromJob(data.job.id);
+              }
             } else if (framework === 'amazon') {
               const pct = Math.min(100, Math.round((verified / target) * 100));
               document.getElementById('progressText-amazon').textContent = `${verified} / ${target}`;
@@ -612,8 +621,9 @@
               amazonStats.books = total;
               amazonStats.emails = verified;
               updateAmazonStats();
-              // Live load leads into table as they come in
-              if (verified > 0) {
+              // Live update: only reload table if new verified leads came in
+              if (verified > (window._lastAmazonVerified || 0)) {
+                window._lastAmazonVerified = verified;
                 document.getElementById('amazonExportBar').classList.remove('hidden');
                 loadAmazonLeadsFromJob(data.job.id);
               }
@@ -919,29 +929,56 @@
       if (table.querySelector('td[colspan]')) table.innerHTML = '';
 
       const row = document.createElement('tr');
-      row.className = 'border-t border-gray-700';
+      const isEven = table.children.length % 2 === 0;
+      row.className = `border-t border-gray-700/50 ${isEven ? 'bg-gray-800' : 'bg-gray-750'} hover:bg-gray-700 transition-colors`;
+      row.style.animation = 'fadeIn 0.3s ease';
+
       const bookTitle = lead.bookTitle || lead.book_title || '';
       const website = lead.website || '';
       const amazonUrl = lead.amazonUrl || lead.amazon_url || '';
+      const reviewCount = lead.reviewCount || lead.review_count || 0;
+      const email = lead.email || '';
+
+      let websiteHtml = '<span class="text-gray-600">—</span>';
+      try {
+        if (website) {
+          const host = new URL(website).hostname.replace('www.', '');
+          websiteHtml = `<a href="${escapeHtml(website)}" target="_blank" class="text-blue-400 hover:text-blue-300 text-xs truncate block max-w-24" title="${escapeHtml(website)}">🌐 ${escapeHtml(host)}</a>`;
+        }
+      } catch(e) {}
+
       row.innerHTML = `
-        <td class="px-4 py-3 text-sm text-gray-400">${lead.id}</td>
-        <td class="px-4 py-3 text-sm font-medium text-white">${escapeHtml(lead.author || '')}</td>
-        <td class="px-4 py-3 text-sm text-gray-300">${escapeHtml(bookTitle).substring(0, 50)}${bookTitle.length > 50 ? '...' : ''}</td>
-        <td class="px-4 py-3 text-sm text-gray-400">${escapeHtml(lead.publishDate || lead.publish_date || '-')}</td>
-        <td class="px-4 py-3 text-sm text-center">
-          <span class="${(lead.reviewCount||lead.review_count||0) === 0 ? 'text-green-400' : 'text-yellow-400'} font-bold">${lead.reviewCount||lead.review_count||0}</span>
+        <td class="px-3 py-2 text-xs text-gray-500">${lead.id}</td>
+        <td class="px-3 py-2 text-xs font-medium text-white max-w-32">
+          <div class="truncate" title="${escapeHtml(lead.author||'')}">${escapeHtml(lead.author || '')}</div>
         </td>
-        <td class="px-4 py-3 text-sm">
-          ${lead.email ? `<span class="text-green-400">📧 <span class="text-xs bg-green-900 text-green-300 px-1 rounded">✅ Verified</span> ${escapeHtml(lead.email)}</span>` : '<span class="text-gray-600">—</span>'}
+        <td class="px-3 py-2 text-xs text-gray-300 max-w-48">
+          <div class="truncate" title="${escapeHtml(bookTitle)}">${escapeHtml(bookTitle)}</div>
         </td>
-        <td class="px-4 py-3 text-sm">
-          ${website ? `<a href="${escapeHtml(website)}" target="_blank" class="text-blue-400 hover:text-blue-300 text-xs">🌐 ${escapeHtml(new URL(website).hostname)}</a>` : '<span class="text-gray-600">—</span>'}
+        <td class="px-3 py-2 text-xs text-gray-400 whitespace-nowrap">${escapeHtml(lead.publishDate || lead.publish_date || '—')}</td>
+        <td class="px-3 py-2 text-xs text-center">
+          <span class="font-bold px-2 py-0.5 rounded-full text-xs ${reviewCount === 0 ? 'bg-green-900/50 text-green-400' : reviewCount <= 5 ? 'bg-yellow-900/50 text-yellow-400' : 'bg-red-900/50 text-red-400'}">${reviewCount}</span>
         </td>
-        <td class="px-4 py-3 text-sm">
-          <a href="${escapeHtml(amazonUrl)}" target="_blank" class="text-orange-400 hover:text-orange-300">📚 View</a>
+        <td class="px-3 py-2 text-xs">
+          ${email
+            ? `<div class="flex items-center gap-1">
+                <span class="text-green-400 truncate max-w-40" title="${escapeHtml(email)}">${escapeHtml(email)}</span>
+                <button onclick="navigator.clipboard.writeText('${escapeHtml(email)}').then(()=>this.textContent='✓').catch(()=>{})" class="text-gray-500 hover:text-green-400 text-xs shrink-0" title="Copy">📋</button>
+               </div>`
+            : '<span class="text-gray-600">—</span>'}
+        </td>
+        <td class="px-3 py-2 text-xs">${websiteHtml}</td>
+        <td class="px-3 py-2 text-xs">
+          <a href="${escapeHtml(amazonUrl)}" target="_blank" class="text-orange-400 hover:text-orange-300 whitespace-nowrap">📚 View</a>
         </td>
       `;
       table.appendChild(row);
+
+      // Auto-scroll to latest row if near bottom
+      const container = table.closest('[style*="max-height"]') || table.parentElement;
+      if (container && container.scrollHeight - container.scrollTop - container.clientHeight < 100) {
+        container.scrollTop = container.scrollHeight;
+      }
     }
 
     async function startAmazonSearch() {
