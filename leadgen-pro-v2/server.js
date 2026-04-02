@@ -752,8 +752,9 @@ const AMAZON_CATEGORY_NODES = [
   { id: '298471',    name: 'Music' },
 ];
 
-// Each category supports up to 400 pages (~16 books/page = ~6,400 books per category)
-const MAX_PAGES_PER_URL = 400;
+// Each category supports up to ~99 pages (~20 books/page = ~1,980 books per category)
+// Page 100+ returns empty — tested live
+const MAX_PAGES_PER_URL = 95;
 
 function buildAmazonUrl(dateFrom, dateTo, page = 1) { return null; } // legacy stub
 
@@ -1188,7 +1189,7 @@ app.post('/api/amazon', async (req, res) => {
       let consecutiveEmpty = 0;
       let urlIndex = 0;
       const seenAsinsThisRun = new Set();
-      saveLog(jobId, 'info', `📚 Total categories: ${AMAZON_BASE_URLS.length} × ${MAX_PAGES_PER_URL} pages = ${AMAZON_BASE_URLS.length * MAX_PAGES_PER_URL * 50} max books`);
+      saveLog(jobId, 'info', `📚 Total categories: ${AMAZON_CATEGORY_NODES.length} × ${MAX_PAGES_PER_URL} pages = ${AMAZON_CATEGORY_NODES.length * MAX_PAGES_PER_URL * 50} max books`);
 
       try {
         saveLog(jobId, 'info', `🚀 Amazon scraper using Web Unlocker (no browser needed)...`);
@@ -1214,20 +1215,20 @@ app.post('/api/amazon', async (req, res) => {
             urlIndex++;
             page_num = 1;
             consecutiveEmpty = 0;
-            if (urlIndex >= AMAZON_BASE_URLS.length) {
+            if (urlIndex >= AMAZON_CATEGORY_NODES.length) {
               urlIndex = 0;
-              saveLog(jobId, 'info', `🔄 Completed all ${AMAZON_BASE_URLS.length} category URLs — waiting 10min then restarting...`);
+              saveLog(jobId, 'info', `🔄 Completed all ${AMAZON_CATEGORY_NODES.length} category URLs — waiting 10min then restarting...`);
               await new Promise(r => setTimeout(r, 10 * 60 * 1000));
               seenAsinsThisRun.clear();
             } else {
-              saveLog(jobId, 'info', `📂 Moving to next category URL ${urlIndex+1}/${AMAZON_BASE_URLS.length}...`);
+              saveLog(jobId, 'info', `📂 Moving to next category URL ${urlIndex+1}/${AMAZON_CATEGORY_NODES.length}...`);
             }
           }
 
-          const pageBatch = [page_num, page_num+1, page_num+2].filter(p => p <= maxPages);
-          saveLog(jobId, 'info', `📄 Category ${urlIndex+1}/${AMAZON_BASE_URLS.length} — pages ${pageBatch.join(',')}...`);
+          const pageBatch = [page_num, page_num+1].filter(p => p <= maxPages);
+          saveLog(jobId, 'info', `📄 Category ${urlIndex+1}/${AMAZON_CATEGORY_NODES.length} — pages ${pageBatch.join(',')}...`);
           const batchResults = await Promise.all(pageBatch.map(p => scrapeOnePage(p)));
-          page_num += 3;
+          page_num += 2;
           const pageBooks = batchResults.flat();
           saveLog(jobId, 'info', `📚 Got ${pageBooks.length} books from ${pageBatch.length} pages`);
           if (pageBooks.length === 0) { consecutiveEmpty++; if(consecutiveEmpty>=3) { page_num = maxPages + 1; } continue; }
