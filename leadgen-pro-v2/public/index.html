@@ -18,11 +18,11 @@
   </style>
 </head>
 <body class="bg-gray-900 text-white min-h-screen">
-  <div class="container mx-auto px-4 py-8 max-w-7xl">
+  <div class="container mx-auto px-3 py-4 sm:py-8 max-w-7xl">
 
     <!-- Header -->
     <div class="text-center mb-8">
-      <h1 class="text-4xl font-bold text-blue-400 mb-2" title="LeadGen Pro v2">🎯 LeadGen Pro v2</h1>
+      <h1 class="text-2xl sm:text-4xl font-bold text-blue-400 mb-2" title="LeadGen Pro v2">🎯 LeadGen Pro v2</h1>
       <p class="text-gray-400">Find intent leads — people actively seeking services</p>
       <div id="versionBadge" class="mt-2 inline-flex items-center gap-2 bg-gray-800 border border-gray-700 rounded-full px-3 py-1 text-xs text-gray-400">
         <span class="w-2 h-2 rounded-full bg-gray-600 inline-block" id="versionDot"></span>
@@ -38,11 +38,11 @@
     <!-- Tab Navigation -->
     <div class="flex gap-2 mb-6 border-b border-gray-700 pb-0">
       <button id="tab-intent" onclick="switchTab('intent')"
-              class="tab-nav px-6 py-3 rounded-t-lg font-bold text-sm transition bg-blue-600 text-white border-b-2 border-blue-400">
+              class="tab-nav px-4 py-2 sm:px-6 sm:py-3 rounded-t-lg font-bold text-xs sm:text-sm transition bg-blue-600 text-white border-b-2 border-blue-400">
         📡 Intent Leads
       </button>
       <button id="tab-amazon" onclick="switchTab('amazon')"
-              class="tab-nav px-6 py-3 rounded-t-lg font-bold text-sm transition bg-gray-700 text-gray-300 hover:bg-gray-600 border-b-2 border-transparent">
+              class="tab-nav px-4 py-2 sm:px-6 sm:py-3 rounded-t-lg font-bold text-xs sm:text-sm transition bg-gray-700 text-gray-300 hover:bg-gray-600 border-b-2 border-transparent">
         📚 Amazon Authors
       </button>
     </div>
@@ -408,50 +408,62 @@
       </div>
 
       <!-- Amazon Results — Tabbed Sheets -->
-      <div id="amazonExportBar" class="hidden bg-gray-800 rounded-lg p-4 mb-4">
-        <div class="flex items-center justify-between flex-wrap gap-2">
-          <span class="text-gray-300 text-sm">
+
+      <!-- Export + Search Bar -->
+      <div id="amazonExportBar" class="hidden bg-gray-800 rounded-lg p-3 mb-3">
+        <div class="flex flex-wrap items-center gap-2 mb-2">
+          <span class="text-gray-300 text-sm flex-1 min-w-0">
             <span class="text-green-400 font-bold"><span id="amazon-count-email">0</span> verified</span>
-            <span class="text-gray-500 ml-2">(<span id="amazon-count-total">0</span> total processed)</span>
+            <span class="text-gray-500 ml-1 text-xs">(<span id="amazon-count-total">0</span> processed)</span>
           </span>
-          <div class="flex gap-2">
-            <button onclick="exportAmazonLeads('high')" class="px-3 py-1 rounded bg-green-700 hover:bg-green-600 text-xs text-white">📥 High CSV</button>
-            <button onclick="exportAmazonLeads('medium')" class="px-3 py-1 rounded bg-yellow-700 hover:bg-yellow-600 text-xs text-white">📥 Medium CSV</button>
-            <button onclick="exportAmazonLeads('all')" class="px-3 py-1 rounded bg-gray-600 hover:bg-gray-500 text-xs text-white">📥 All CSV</button>
-          </div>
+          <button onclick="copyAllEmails()" class="px-2 py-1 rounded bg-purple-700 hover:bg-purple-600 text-xs text-white whitespace-nowrap">📋 Copy Emails</button>
+          <button onclick="exportAmazonLeads('high')" class="px-2 py-1 rounded bg-green-700 hover:bg-green-600 text-xs text-white">📥 High</button>
+          <button onclick="exportAmazonLeads('medium')" class="px-2 py-1 rounded bg-yellow-700 hover:bg-yellow-600 text-xs text-white">📥 Med</button>
+          <button onclick="exportAmazonLeads('all')" class="px-2 py-1 rounded bg-gray-600 hover:bg-gray-500 text-xs text-white">📥 All</button>
+        </div>
+        <div class="flex gap-2 flex-wrap">
+          <input type="text" id="amazonSearch" placeholder="🔍 Search author or email..." oninput="renderSheetTable(activeSheet)"
+            class="flex-1 min-w-0 bg-gray-700 border border-gray-600 rounded px-3 py-1.5 text-xs focus:border-blue-500 focus:outline-none">
+          <select id="amazonSort" onchange="renderSheetTable(activeSheet)" class="bg-gray-700 border border-gray-600 rounded px-2 py-1.5 text-xs focus:outline-none">
+            <option value="default">Sort: Default</option>
+            <option value="author">Author A-Z</option>
+            <option value="date-desc">Newest First</option>
+            <option value="date-asc">Oldest First</option>
+            <option value="reviews">Reviews ↑</option>
+          </select>
         </div>
       </div>
 
       <!-- Sheet Tabs -->
-      <div class="flex gap-1 mb-0 border-b border-gray-700">
+      <div class="flex gap-1 mb-0 border-b border-gray-700 overflow-x-auto">
         <button id="sheet-tab-high" onclick="switchSheet('high')"
-          class="sheet-tab px-4 py-2 text-sm font-bold rounded-t-lg bg-green-700 text-white border-b-2 border-green-400">
-          🟢 High <span id="sheet-count-high" class="ml-1 text-xs bg-green-900 px-1.5 rounded-full">0</span>
+          class="sheet-tab px-3 py-2 text-xs font-bold rounded-t-lg bg-green-700 text-white border-b-2 border-green-400 whitespace-nowrap">
+          🟢 High <span id="sheet-count-high" class="ml-1 bg-green-900 px-1.5 rounded-full text-xs">0</span>
         </button>
         <button id="sheet-tab-medium" onclick="switchSheet('medium')"
-          class="sheet-tab px-4 py-2 text-sm font-bold rounded-t-lg bg-gray-700 text-gray-300 hover:bg-gray-600 border-b-2 border-transparent">
-          🟡 Medium <span id="sheet-count-medium" class="ml-1 text-xs bg-gray-600 px-1.5 rounded-full">0</span>
+          class="sheet-tab px-3 py-2 text-xs font-bold rounded-t-lg bg-gray-700 text-gray-300 hover:bg-gray-600 border-b-2 border-transparent whitespace-nowrap">
+          🟡 Medium <span id="sheet-count-medium" class="ml-1 bg-gray-600 px-1.5 rounded-full text-xs">0</span>
         </button>
         <button id="sheet-tab-website" onclick="switchSheet('website')"
-          class="sheet-tab px-4 py-2 text-sm font-bold rounded-t-lg bg-gray-700 text-gray-300 hover:bg-gray-600 border-b-2 border-transparent">
-          🌐 Website Only <span id="sheet-count-website" class="ml-1 text-xs bg-gray-600 px-1.5 rounded-full">0</span>
+          class="sheet-tab px-3 py-2 text-xs font-bold rounded-t-lg bg-gray-700 text-gray-300 hover:bg-gray-600 border-b-2 border-transparent whitespace-nowrap">
+          🌐 Website Only <span id="sheet-count-website" class="ml-1 bg-gray-600 px-1.5 rounded-full text-xs">0</span>
         </button>
       </div>
 
-      <!-- Sheet Tables -->
+      <!-- Sheet Table -->
       <div class="bg-gray-800 rounded-b-lg rounded-tr-lg overflow-hidden">
-        <div class="overflow-x-auto" style="max-height:520px;overflow-y:auto;">
+        <div class="overflow-x-auto" style="max-height:60vh;overflow-y:auto;">
           <table class="w-full text-sm">
             <thead class="bg-gray-700" style="position:sticky;top:0;z-index:10;">
               <tr>
-                <th class="px-3 py-2 text-left text-xs text-gray-400 font-semibold w-10">#</th>
-                <th class="px-3 py-2 text-left text-xs text-gray-400 font-semibold min-w-32">Author</th>
-                <th class="px-3 py-2 text-left text-xs text-gray-400 font-semibold min-w-48">Book Title</th>
-                <th class="px-3 py-2 text-left text-xs text-gray-400 font-semibold w-24">Published</th>
-                <th class="px-3 py-2 text-center text-xs text-gray-400 font-semibold w-16">⭐</th>
-                <th class="px-3 py-2 text-left text-xs text-gray-400 font-semibold min-w-48">Email</th>
-                <th class="px-3 py-2 text-left text-xs text-gray-400 font-semibold w-28">Website</th>
-                <th class="px-3 py-2 text-left text-xs text-gray-400 font-semibold w-20">Amazon</th>
+                <th class="px-2 py-2 text-left text-xs text-gray-400 font-semibold w-8">#</th>
+                <th class="px-2 py-2 text-left text-xs text-gray-400 font-semibold">Author</th>
+                <th class="px-2 py-2 text-left text-xs text-gray-400 font-semibold hidden md:table-cell">Book Title</th>
+                <th class="px-2 py-2 text-left text-xs text-gray-400 font-semibold hidden lg:table-cell w-24">Published</th>
+                <th class="px-2 py-2 text-center text-xs text-gray-400 font-semibold hidden sm:table-cell w-12">⭐</th>
+                <th class="px-2 py-2 text-left text-xs text-gray-400 font-semibold">Email</th>
+                <th class="px-2 py-2 text-left text-xs text-gray-400 font-semibold hidden lg:table-cell w-28">Website</th>
+                <th class="px-2 py-2 text-left text-xs text-gray-400 font-semibold w-14">Link</th>
               </tr>
             </thead>
             <tbody id="amazonResultsTable">
@@ -461,7 +473,7 @@
         </div>
       </div>
 
-    </div><!-- end #content-amazon -->
+          </div><!-- end #content-amazon -->
 
   </div>
 
@@ -516,7 +528,7 @@
         return `
         <div class="bg-gray-800 border border-gray-700 rounded-lg mb-3" id="task-card-${job.id}">
           <!-- Task Header -->
-          <div class="flex items-center gap-3 px-4 py-3">
+          <div class="flex items-start gap-2 px-3 py-3 sm:px-4">
             <div class="flex-1 min-w-0">
               <div class="flex items-center gap-2 flex-wrap">
                 <span class="text-xs font-bold text-gray-400">Task #${job.id}</span>
@@ -805,17 +817,49 @@
 
     function renderSheetTable(sheet) {
       const table = document.getElementById('amazonResultsTable');
+      const searchQ = (document.getElementById('amazonSearch')?.value || '').toLowerCase().trim();
+      const sortBy = document.getElementById('amazonSort')?.value || 'default';
+
       let filtered;
       if (sheet === 'high') filtered = amazonLeads.filter(l => (l.emailConfidence||l.email_confidence) === 'high' && l.email);
       else if (sheet === 'medium') filtered = amazonLeads.filter(l => (l.emailConfidence||l.email_confidence) === 'medium' && l.email);
       else filtered = amazonLeads.filter(l => !l.email && l.website);
 
+      // Apply search filter
+      if (searchQ) {
+        filtered = filtered.filter(l =>
+          (l.author||'').toLowerCase().includes(searchQ) ||
+          (l.email||'').toLowerCase().includes(searchQ) ||
+          (l.bookTitle||l.book_title||'').toLowerCase().includes(searchQ)
+        );
+      }
+
+      // Apply sort
+      if (sortBy === 'author') filtered = [...filtered].sort((a,b) => (a.author||'').localeCompare(b.author||''));
+      else if (sortBy === 'date-desc') filtered = [...filtered].sort((a,b) => new Date(b.publishDate||b.publish_date||0) - new Date(a.publishDate||a.publish_date||0));
+      else if (sortBy === 'date-asc') filtered = [...filtered].sort((a,b) => new Date(a.publishDate||a.publish_date||0) - new Date(b.publishDate||b.publish_date||0));
+      else if (sortBy === 'reviews') filtered = [...filtered].sort((a,b) => (a.reviewCount||a.review_count||0) - (b.reviewCount||b.review_count||0));
+
       if (filtered.length === 0) {
-        table.innerHTML = `<tr><td colspan="8" class="px-4 py-8 text-center text-gray-500">No ${sheet} leads yet.</td></tr>`;
+        table.innerHTML = `<tr><td colspan="8" class="px-4 py-8 text-center text-gray-500">${searchQ ? 'No results for "'+escapeHtml(searchQ)+'"' : 'No '+sheet+' leads yet.'}</td></tr>`;
         return;
       }
       table.innerHTML = '';
       filtered.forEach((lead, i) => { renderAmazonLead({...lead, id: i+1}); });
+    }
+
+    function copyAllEmails() {
+      const sheet = activeSheet;
+      let leads;
+      if (sheet === 'high') leads = amazonLeads.filter(l => (l.emailConfidence||l.email_confidence) === 'high' && l.email);
+      else if (sheet === 'medium') leads = amazonLeads.filter(l => (l.emailConfidence||l.email_confidence) === 'medium' && l.email);
+      else leads = amazonLeads.filter(l => l.email);
+      const emails = leads.map(l => l.email).filter(Boolean).join(', ');
+      if (!emails) { alert('No emails to copy'); return; }
+      navigator.clipboard.writeText(emails).then(() => {
+        const btn = document.querySelector('[onclick="copyAllEmails()"]');
+        if (btn) { const orig = btn.textContent; btn.textContent = '✓ Copied!'; setTimeout(() => btn.textContent = orig, 2000); }
+      });
     }
 
     function updateSheetCounts() {
@@ -1076,35 +1120,30 @@
       } catch(e) {}
 
       row.innerHTML = `
-        <td class="px-3 py-2 text-xs text-gray-500">${lead.id}</td>
-        <td class="px-3 py-2 text-xs font-medium text-white max-w-32">
-          <div class="truncate" title="${escapeHtml(lead.author||'')}">${escapeHtml(lead.author || '')}</div>
+        <td class="px-2 py-2 text-xs text-gray-500">${lead.id}</td>
+        <td class="px-2 py-2 text-xs font-medium text-white">
+          <div class="truncate max-w-[120px]" title="${escapeHtml(lead.author||'')}">${escapeHtml(lead.author || '')}</div>
         </td>
-        <td class="px-3 py-2 text-xs text-gray-300 max-w-48">
-          <div class="truncate" title="${escapeHtml(bookTitle)}">${escapeHtml(bookTitle)}</div>
+        <td class="px-2 py-2 text-xs text-gray-300 hidden md:table-cell">
+          <div class="truncate max-w-[200px]" title="${escapeHtml(bookTitle)}">${escapeHtml(bookTitle)}</div>
         </td>
-        <td class="px-3 py-2 text-xs text-gray-400 whitespace-nowrap">${escapeHtml(lead.publishDate || lead.publish_date || '—')}</td>
-        <td class="px-3 py-2 text-xs text-center">
-          <span class="font-bold px-2 py-0.5 rounded-full text-xs ${reviewCount === 0 ? 'bg-green-900/50 text-green-400' : reviewCount <= 5 ? 'bg-yellow-900/50 text-yellow-400' : 'bg-red-900/50 text-red-400'}">${reviewCount}</span>
+        <td class="px-2 py-2 text-xs text-gray-400 whitespace-nowrap hidden lg:table-cell">${escapeHtml(lead.publishDate || lead.publish_date || '—')}</td>
+        <td class="px-2 py-2 text-xs text-center hidden sm:table-cell">
+          <span class="font-bold px-1.5 py-0.5 rounded-full text-xs ${reviewCount === 0 ? 'bg-green-900/50 text-green-400' : reviewCount <= 5 ? 'bg-yellow-900/50 text-yellow-400' : 'bg-red-900/50 text-red-400'}">${reviewCount}</span>
         </td>
-        <td class="px-3 py-2 text-xs">
+        <td class="px-2 py-2 text-xs">
           ${email
-            ? `<div class="flex items-center gap-1 flex-wrap">
-                ${(lead.emailConfidence||lead.email_confidence) === 'high'
-                  ? '<span class="text-xs bg-green-900 text-green-300 px-1 rounded shrink-0">🟢 High</span>'
-                  : (lead.emailConfidence||lead.email_confidence) === 'medium'
-                  ? '<span class="text-xs bg-yellow-900 text-yellow-300 px-1 rounded shrink-0">🟡 Medium</span>'
-                  : '<span class="text-xs bg-gray-700 text-gray-400 px-1 rounded shrink-0">⚪ Low</span>'}
-                <span class="text-green-400 truncate max-w-36" title="${escapeHtml(email)}">${escapeHtml(email)}</span>
-                <button onclick="navigator.clipboard.writeText('${escapeHtml(email)}').then(()=>this.textContent='✓').catch(()=>{})" class="text-gray-500 hover:text-green-400 text-xs shrink-0" title="Copy">📋</button>
+            ? `<div class="flex items-center gap-1">
+                <span class="text-green-400 truncate max-w-[150px] sm:max-w-[200px]" title="${escapeHtml(email)}">${escapeHtml(email)}</span>
+                <button onclick="navigator.clipboard.writeText('${escapeHtml(email)}').then(()=>this.textContent='✓').catch(()=>{})" class="text-gray-500 hover:text-green-400 shrink-0" title="Copy">📋</button>
                </div>`
             : website
-              ? `<span class="text-yellow-600 text-xs italic">🌐 Contact via website</span>`
+              ? `<span class="text-yellow-600 text-xs italic">🌐 Via website</span>`
               : '<span class="text-gray-600">—</span>'}
         </td>
-        <td class="px-3 py-2 text-xs">${websiteHtml}</td>
-        <td class="px-3 py-2 text-xs">
-          <a href="${escapeHtml(amazonUrl)}" target="_blank" class="text-orange-400 hover:text-orange-300 whitespace-nowrap">📚 View</a>
+        <td class="px-2 py-2 text-xs hidden lg:table-cell">${websiteHtml}</td>
+        <td class="px-2 py-2 text-xs">
+          <a href="${escapeHtml(amazonUrl)}" target="_blank" class="text-orange-400 hover:text-orange-300 whitespace-nowrap">📚</a>
         </td>
       `;
       table.appendChild(row);
