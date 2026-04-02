@@ -8,6 +8,12 @@ require('dotenv').config();
 
 const db = require('./db');
 
+// Mark any stale running jobs as error on startup
+try {
+  db.exec("UPDATE scrape_jobs SET status='error', completed_at=CURRENT_TIMESTAMP WHERE status='running'");
+  console.log('✅ Cleaned up stale running jobs');
+} catch(e) {}
+
 const BUILD_TIME = new Date().toISOString();
 
 const app = express();
@@ -1147,6 +1153,15 @@ app.get('/api/health', (req, res) => {
   });
 });
 
+// GET /api/stats — dashboard summary
+app.get('/api/stats', (req, res) => {
+  const total = db.prepare('SELECT COUNT(*) as c FROM amazon_leads').get()?.c || 0;
+  const verified = db.prepare('SELECT COUNT(*) as c FROM amazon_leads WHERE email_verified=1').get()?.c || 0;
+  const websites = db.prepare('SELECT COUNT(*) as c FROM amazon_leads WHERE website IS NOT NULL').get()?.c || 0;
+  const jobs = db.prepare('SELECT COUNT(*) as c FROM scrape_jobs').get()?.c || 0;
+  res.json({ total, verified, websites, jobs });
+});
+
 // GET /api/version — returns git commit info baked at build time
 app.get('/api/version', (req, res) => {
   res.json({
@@ -1373,7 +1388,6 @@ app.post('/api/amazon', async (req, res) => {
             }
 
             saveLog(jobId, 'info', `📚 Processing: "${title}" by ${author} (${book.reviewCount || 0} reviews)`);
-            totalCount++;
 
             // Find author contact
             const { email, website } = await findAuthorContact(author, title, (level, msg) => saveLog(jobId, level, msg));
@@ -1421,6 +1435,7 @@ app.post('/api/amazon', async (req, res) => {
             }
 
             // Save to DB — both verified email leads AND website-only leads
+            totalCount++;
             try {
               db.prepare(
                 `INSERT INTO amazon_leads (job_id, author, book_title, publish_date, review_count, email, email_verified, email_status, website, amazon_url, asin, is_duplicate)
@@ -1428,10 +1443,9 @@ app.post('/api/amazon', async (req, res) => {
               ).run(jobId, author, title, book.publishDate || null, book.reviewCount || 0, email || null, emailVerified ? 1 : 0, emailStatus, hasRealWebsite ? website : null, amazonUrl, asin, isDuplicate);
             } catch (dbErr) {
               saveLog(jobId, 'warning', `⚠️ DB insert skipped (dupe): ${asin}`);
+              totalCount--;
               return;
             }
-
-            totalCount++;
 
             if (emailVerified && isDuplicate === 0) {
               // Fully verified lead — counts toward target

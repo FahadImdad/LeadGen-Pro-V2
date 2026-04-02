@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>LeadGen Pro v2 - Intent Lead Generator</title>
+  <title>LeadGen Pro v2 — Amazon Author Lead Gen</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <style>
     .verified { color: #10b981; }
@@ -22,11 +22,16 @@
 
     <!-- Header -->
     <div class="text-center mb-8">
-      <h1 class="text-4xl font-bold text-blue-400 mb-2">🎯 LeadGen Pro v2</h1>
+      <h1 class="text-4xl font-bold text-blue-400 mb-2" title="LeadGen Pro v2">🎯 LeadGen Pro v2</h1>
       <p class="text-gray-400">Find intent leads — people actively seeking services</p>
       <div id="versionBadge" class="mt-2 inline-flex items-center gap-2 bg-gray-800 border border-gray-700 rounded-full px-3 py-1 text-xs text-gray-400">
         <span class="w-2 h-2 rounded-full bg-gray-600 inline-block" id="versionDot"></span>
         <span id="versionText">loading...</span>
+      </div>
+      <div id="statsBar" class="mt-3 flex gap-4 justify-center text-xs text-gray-500">
+        <span>✅ <span id="stat-total-verified">—</span> verified emails</span>
+        <span>🌐 <span id="stat-total-websites">—</span> websites</span>
+        <span>📋 <span id="stat-total-tasks">—</span> tasks</span>
       </div>
     </div>
 
@@ -239,7 +244,7 @@
         </div>
         <div class="mt-3 grid grid-cols-4 gap-2 text-center text-xs">
           <div class="bg-gray-700 rounded p-2">
-            <div class="text-gray-400">Cities Scraped</div>
+            <div class="text-gray-400">Cities Searched</div>
             <div id="stat-cities" class="text-xl font-bold text-blue-400">0</div>
           </div>
           <div class="bg-gray-700 rounded p-2">
@@ -298,7 +303,7 @@
           <tbody id="resultsTable">
             <tr>
               <td colspan="7" class="px-4 py-8 text-center text-gray-500">
-                Select a job above or start a new scrape
+                Select a task above or start a new task
               </td>
             </tr>
           </tbody>
@@ -321,7 +326,7 @@
         </div>
       </div>
 
-      <!-- Amazon Scrape Form (hidden by default if jobs exist) -->
+      <!-- Amazon Task Form (hidden by default if jobs exist) -->
       <div id="scrapeForm-amazon" class="scrape-form bg-gray-800 rounded-lg p-6 mb-8">
         <div class="flex justify-between items-center mb-4">
           <h3 class="text-base font-bold text-gray-300">🔍 New Task</h3>
@@ -434,7 +439,7 @@
             <tbody id="amazonResultsTable">
               <tr>
                 <td colspan="8" class="px-4 py-8 text-center text-gray-500">
-                  Select a task above or start a new scrape
+                  Select a task above or start a new task
                 </td>
               </tr>
             </tbody>
@@ -467,7 +472,7 @@
       if (job.status === 'complete') return '<span class="px-2 py-0.5 rounded-full text-xs bg-green-900 text-green-300">✅ Complete</span>';
       if (job.status === 'cancelled') return '<span class="px-2 py-0.5 rounded-full text-xs bg-red-900 text-red-300">✕ Cancelled</span>';
       if (job.status === 'error') return '<span class="px-2 py-0.5 rounded-full text-xs bg-red-900 text-red-300">❌ Error</span>';
-      if (job.is_paused) return '<span class="px-2 py-0.5 rounded-full text-xs bg-yellow-900 text-yellow-300">⏸ Paused</span>';
+      if (job.is_paused || 0) return '<span class="px-2 py-0.5 rounded-full text-xs bg-yellow-900 text-yellow-300">⏸ Paused</span>';
       return '<span class="px-2 py-0.5 rounded-full text-xs bg-blue-900 text-blue-300 animate-pulse">🟢 Running</span>';
     }
 
@@ -514,8 +519,8 @@
             </div>
             <div class="flex items-center gap-1 shrink-0">
               <!-- Pause / Resume -->
-              ${isRunning && !job.is_paused ? `<button onclick="pauseTask(${job.id},'${framework}')" class="px-2 py-1 rounded bg-yellow-600 hover:bg-yellow-700 text-xs text-white" title="Pause">⏸</button>` : ''}
-              ${isRunning && job.is_paused ? `<button onclick="resumeTask(${job.id},'${framework}')" class="px-2 py-1 rounded bg-green-600 hover:bg-green-700 text-xs text-white" title="Resume">▶</button>` : ''}
+              ${isRunning && !(job.is_paused||0) ? `<button onclick="pauseTask(${job.id},'${framework}')" class="px-2 py-1 rounded bg-yellow-600 hover:bg-yellow-700 text-xs text-white" title="Pause">⏸</button>` : ''}
+              ${isRunning && (job.is_paused||0) ? `<button onclick="resumeTask(${job.id},'${framework}')" class="px-2 py-1 rounded bg-green-600 hover:bg-green-700 text-xs text-white" title="Resume">▶</button>` : ''}
               <!-- Cancel -->
               ${isRunning ? `<button onclick="cancelTask(${job.id},'${framework}')" class="px-2 py-1 rounded bg-red-700 hover:bg-red-800 text-xs text-white" title="Cancel">✕</button>` : ''}
               <!-- View / Download -->
@@ -527,19 +532,24 @@
               <button onclick="deleteJob(${job.id},'${framework}')" class="px-2 py-1 rounded bg-gray-600 hover:bg-red-700 text-xs text-white" title="Delete">🗑</button>
             </div>
           </div>
+          <div id="task-detail-${job.id}" style="display:${minimized ? 'none' : 'block'};" class="px-4 pb-3 border-t border-gray-700 pt-2">
+            <div class="flex gap-3 text-xs text-gray-400">
+              <button onclick="viewJob(${job.id},'${job.framework}')" class="text-blue-400 hover:text-blue-300">👁 View leads in table</button>
+              <a href="/api/export/${job.id}?framework=${job.framework}&verifiedOnly=true" class="text-green-400 hover:text-green-300">📥 Download CSV</a>
+            </div>
+          </div>
         </div>`;
       }).join('');
     }
 
     function toggleTask(jobId) {
-      _minimized[jobId] = !(_minimized[jobId] === false);
+      const detail = document.getElementById(`task-detail-${jobId}`);
       const btn = document.getElementById(`toggle-btn-${jobId}`);
-      // For now just toggle display of expanded view if it exists
-      const expanded = document.getElementById(`task-expanded-${jobId}`);
-      if (expanded) {
-        const hidden = expanded.style.display === 'none';
-        expanded.style.display = hidden ? 'block' : 'none';
+      if (detail) {
+        const hidden = detail.style.display === 'none';
+        detail.style.display = hidden ? 'block' : 'none';
         btn.textContent = hidden ? '▼' : '▲';
+        _minimized[jobId] = !hidden;
       }
     }
 
@@ -1125,24 +1135,38 @@
       }
     }
 
+    async function loadStats() {
+      try {
+        const r = await fetch('/api/stats');
+        const s = await r.json();
+        document.getElementById('stat-total-verified').textContent = s.verified.toLocaleString();
+        document.getElementById('stat-total-websites').textContent = s.websites.toLocaleString();
+        document.getElementById('stat-total-tasks').textContent = s.jobs;
+      } catch(e) {}
+    }
+
     // ===================== INIT =====================
+    let _lastJobsHash = '';
     document.addEventListener('DOMContentLoaded', () => {
       wakeServer();
       setDefaultDates();
       loadJobs('intent');
       loadJobs('amazon');
       loadVersion();
+      loadStats();
 
-      // Auto-refresh task list every 5s to show live status/progress
+      // Auto-refresh: only re-render if something actually changed (avoids scroll-jump)
       setInterval(async () => {
         try {
           const res = await fetch('/api/jobs');
           const jobs = await res.json();
-          const hasRunning = jobs.some(j => j.status === 'running');
-          if (hasRunning) {
+          const hash = jobs.map(j => j.id + j.status + j.verified_count + (j.is_paused||0)).join(',');
+          if (hash !== _lastJobsHash) {
+            _lastJobsHash = hash;
             loadJobs('intent');
             loadJobs('amazon');
           }
+          loadStats();
         } catch(e) {}
       }, 5000);
     });
