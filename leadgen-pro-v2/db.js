@@ -16,6 +16,7 @@ _db.exec(`
     keyword TEXT,
     target_leads INTEGER,
     status TEXT DEFAULT 'running',
+    is_paused INTEGER DEFAULT 0,
     verified_count INTEGER DEFAULT 0,
     total_count INTEGER DEFAULT 0,
     created_at TEXT DEFAULT CURRENT_TIMESTAMP,

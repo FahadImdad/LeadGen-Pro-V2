@@ -1069,6 +1069,27 @@ app.get('/api/jobs/:jobId/logs', (req, res) => {
   res.json({ logs, job });
 });
 
+// POST /api/jobs/:jobId/pause
+app.post('/api/jobs/:jobId/pause', (req, res) => {
+  const { jobId } = req.params;
+  db.prepare('UPDATE scrape_jobs SET is_paused=1 WHERE id=?').run(jobId);
+  res.json({ ok: true });
+});
+
+// POST /api/jobs/:jobId/resume
+app.post('/api/jobs/:jobId/resume', (req, res) => {
+  const { jobId } = req.params;
+  db.prepare('UPDATE scrape_jobs SET is_paused=0 WHERE id=?').run(jobId);
+  res.json({ ok: true });
+});
+
+// POST /api/jobs/:jobId/cancel
+app.post('/api/jobs/:jobId/cancel', (req, res) => {
+  const { jobId } = req.params;
+  db.prepare("UPDATE scrape_jobs SET status='cancelled', is_paused=0 WHERE id=?").run(jobId);
+  res.json({ ok: true });
+});
+
 // DELETE /api/jobs/:jobId — delete a job and its leads
 app.delete('/api/jobs/:jobId', (req, res) => {
   const { jobId } = req.params;
@@ -1292,6 +1313,12 @@ app.post('/api/amazon', async (req, res) => {
 
           async function processBook(book) {
             if (verifiedCount >= targetLeads) return;
+
+            const jobStatus = db.prepare('SELECT status, is_paused FROM scrape_jobs WHERE id=?').get(jobId);
+            if (jobStatus?.status === 'cancelled') return;
+            while (jobStatus && db.prepare('SELECT is_paused FROM scrape_jobs WHERE id=?').get(jobId)?.is_paused) {
+              await new Promise(r => setTimeout(r, 3000));
+            }
 
             const title = book.title || 'Unknown Title';
             const author = book.author || 'Unknown';
