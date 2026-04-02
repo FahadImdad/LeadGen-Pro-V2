@@ -1286,13 +1286,14 @@ app.post('/api/amazon', async (req, res) => {
           saveLog(jobId, 'info', `⚡ Processing ${pageBooks.length} authors with ${CONCURRENCY} concurrent workers...`);
 
           // Filter out already-seen ASINs (both DB and current run)
-          const newBooks = pageBooks.filter(book => {
-            if (seenAsinsThisRun.has(book.asin)) return false;
+          const newBooks = [];
+          for (const book of pageBooks) {
+            if (seenAsinsThisRun.has(book.asin)) continue;
             const exists = await db.prepare('SELECT id FROM amazon_leads WHERE asin = ?').get(book.asin);
-            if (exists) { seenAsinsThisRun.add(book.asin); return false; }
+            if (exists) { seenAsinsThisRun.add(book.asin); continue; }
             seenAsinsThisRun.add(book.asin);
-            return true;
-          });
+            newBooks.push(book);
+          }
 
           // If all books on this batch were repeats, Amazon is cycling — move to next loop
           if (newBooks.length === 0 && pageBooks.length > 0) {
