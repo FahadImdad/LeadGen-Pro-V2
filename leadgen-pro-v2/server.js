@@ -1338,6 +1338,17 @@ app.post('/api/amazon', async (req, res) => {
               return;
             }
 
+            // Future date filter — skip pre-order books (not published yet)
+            if (book.publishDate) {
+              const pubDate = new Date(book.publishDate);
+              const today = new Date();
+              today.setHours(0, 0, 0, 0);
+              if (!isNaN(pubDate.getTime()) && pubDate > today) {
+                saveLog(jobId, 'info', `⏭️ SKIP (future book, publishes ${book.publishDate}): ${title.substring(0, 50)}`);
+                return;
+              }
+            }
+
             // ASIN dedup — skip entirely if already in DB
             const asinExists = db.prepare('SELECT id FROM amazon_leads WHERE asin = ?').get(asin);
             if (asinExists) {
