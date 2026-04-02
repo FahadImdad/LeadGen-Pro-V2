@@ -931,125 +931,81 @@ async function findAuthorContact(authorName, bookTitle, saveLog) {
     } catch(e) { return { email: null, website: null, html: null }; }
   }
 
-  saveLog('info', `🔍 Searching contact for ${authorName}...`);
-  const encodedName = encodeURIComponent(authorName);
+  saveLog('info', `🔍 ${authorName}...`);
 
-  // ── PHASE 1: Find author's own website via Google (website URL only, no email harvesting from search) ──
-  // We use Google only to DISCOVER the author's website URL, then visit the site directly.
-  // Emails found directly on search result pages are ignored — they could be anyone's.
-  let foundWebsite = null;
-
-  const websiteSearchSources = [
-    `https://www.google.com/search?q=${encodeURIComponent(`"${authorName}" author official website`)}&num=10`,
-    `https://www.google.com/search?q=${encodeURIComponent(`"${authorName}" author site:*.com`)}&num=10`,
-    `https://html.duckduckgo.com/html/?q=${encodeURIComponent(`"${authorName}" author official website`)}`,
+  // ── FAST PATH: Guess author's domain directly (no search needed) ──────
+  // Try howardpartridge.com, howardpartridgeauthor.com etc — if exists, get email immediately
+  const guessDomains = [
+    `${firstName}${lastName}.com`,
+    `${firstName}${lastName}author.com`,
+    `${nameSlug}.com`,
   ];
-
-  for (const url of websiteSearchSources) {
+  for (const domain of guessDomains) {
     try {
-      const html = await scrapeWithBrightData(url);
-      if (!html) continue;
-      const sites = extractRealWebsites(html);
-      // Only accept sites that contain the author's name in the domain
-      // Must contain author's name in domain — no fallback to random sites
-      const authorSite = sites.find(s => {
-        try {
-          const host = new URL(s).hostname.toLowerCase().replace(/^www\./, '');
-          return nameParts.some(part => host.includes(part));
-        } catch { return false; }
-      });
-      if (authorSite) { foundWebsite = authorSite; break; }
-    } catch(e) {}
-  }
-
-  // ── PHASE 1b: Also check common social media profiles ────────────────
-  // Instagram, Facebook author page — direct visit, extract email if visible
-  const SOCIAL_SOURCES = [
-    `https://www.instagram.com/${firstName}${lastName}/`,
-    `https://www.instagram.com/${firstName}.${lastName}/`,
-    `https://www.facebook.com/${firstName}${lastName}/`,
-    `https://www.facebook.com/${nameSlug}/`,
-    `https://twitter.com/${firstName}${lastName}`,
-    `https://reedsy.com/discovery/user/${nameSlug}`,
-  ];
-
-  let foundEmail = null;
-  for (const url of SOCIAL_SOURCES) {
-    const result = await fetchEmails(url);
-    if (result.email) { foundEmail = result.email; break; }
-    if (result.website && !foundWebsite) foundWebsite = result.website;
-  }
-
-  if (foundEmail) {
-    saveLog('success', `📧 Email found on social media: ${foundEmail}`);
-    return { email: foundEmail, website: foundWebsite };
-  }
-
-  // ── PHASE 1b: Try predictable domain-based email patterns via Hunter verify ──
-  const domainPatterns = [
-    `${firstName}@${firstName}${lastName}.com`,
-    `contact@${firstName}${lastName}.com`,
-    `hello@${firstName}${lastName}.com`,
-    `info@${firstName}${lastName}.com`,
-    `${firstName}@${firstName}${lastName}author.com`,
-    `${firstName}.${lastName}@${firstName}${lastName}.com`,
-  ].filter(e => {
-    const domain = e.split('@')[1] || '';
-    return domain.includes(firstName) || domain.includes(lastName);
-  });
-
-  for (const email of domainPatterns) {
-    try {
-      const r = await axios.get(`https://api.hunter.io/v2/email-verifier?email=${encodeURIComponent(email)}&api_key=${HUNTER_API_KEY}`, { timeout: 8000 });
-      const status = r.data?.data?.status;
-      if (status === 'valid') {
-        saveLog('success', `📧 Domain pattern verified: ${email}`);
-        return { email, website: foundWebsite };
+      const html = await scrapeWithBrightData(`https://${domain}`);
+      if (!html || html.length < 500) continue;
+      if (!nameParts.some(p => html.toLowerCase().includes(p))) continue;
+      const emails = extractEmails(html);
+      if (emails.length > 0) {
+        saveLog('success', `📧 Fast: ${emails[0]} (${domain})`);
+        return { email: emails[0], website: `https://${domain}` };
+      }
+      // Site exists, no email on homepage — try /contact once
+      const ch = await scrapeWithBrightData(`https://${domain}/contact`);
+      if (ch) {
+        const ce = extractEmails(ch);
+        if (ce.length > 0) { saveLog('success', `📧 Fast /contact: ${ce[0]}`); return { email: ce[0], website: `https://${domain}` }; }
+      }
+      // Hunter on this domain
+      if (HUNTER_API_KEY) {
+        const r = await axios.get(`https://api.hunter.io/v2/email-finder?domain=${domain}&first_name=${encodeURIComponent(firstName)}&last_name=${encodeURIComponent(lastName)}&api_key=${HUNTER_API_KEY}`, { timeout: 8000 }).catch(() => null);
+        const e = r?.data?.data?.email;
+        if (e) { saveLog('success', `📧 Hunter fast: ${e}`); return { email: e, website: `https://${domain}` }; }
       }
     } catch(e) {}
   }
 
+  // ── PHASE 1: Single Google search to find author website ─────────────
+  let foundWebsite = null;
+  try {
+    const html = await scrapeWithBrightData(
+      `https://www.google.com/search?q=${encodeURIComponent('"' + authorName + '" author official website')}&num=10`
+    );
+    if (html) {
+      const sites = extractRealWebsites(html);
+      foundWebsite = sites.find(s => {
+        try {
+          const host = new URL(s).hostname.toLowerCase().replace(/^www\./, '');
+          return nameParts.some(p => host.includes(p));
+        } catch { return false; }
+      }) || null;
+    }
+  } catch(e) {}
+
   if (!foundWebsite) {
-    saveLog('info', `⏩ No online presence found for ${authorName} — skipping`);
+    saveLog('info', `⏩ No website for ${authorName}`);
     return { email: null, website: null };
   }
 
-  // ── PHASE 2: Visit found website's contact/about pages (up to 3) ──────
-  saveLog('info', `🌐 Checking website for ${authorName}: ${foundWebsite}`);
-  const contactPages = [
-    foundWebsite.replace(/\/$/, '') + '/contact',
-    foundWebsite.replace(/\/$/, '') + '/about',
-    foundWebsite,
-  ];
-
-  for (const url of contactPages) {
-    const result = await fetchEmails(url);
+  // ── PHASE 2: Visit homepage + /contact (2 calls max) ─────────────────
+  saveLog('info', `🌐 ${foundWebsite}`);
+  for (const path of ['', '/contact']) {
+    const result = await fetchEmails(foundWebsite.replace(/\/$/, '') + path);
     if (result.email) {
-      saveLog('success', `📧 Email found on website: ${result.email}`);
+      saveLog('success', `📧 ${result.email}`);
       return { email: result.email, website: foundWebsite };
     }
   }
 
-  // ── PHASE 3: Hunter.io finder + domain search ─────────────────────────
-  if (foundWebsite && HUNTER_API_KEY) {
-    saveLog('hunter', `🎯 Hunter: finder + domain search for ${authorName}...`);
+  // ── PHASE 3: Hunter domain search (1 call) ───────────────────────────
+  if (HUNTER_API_KEY) {
     const domain = new URL(foundWebsite).hostname.replace(/^www\./, '');
-
-    const [finderRes, domainEmail] = await Promise.all([
-      axios.get(`https://api.hunter.io/v2/email-finder?domain=${encodeURIComponent(domain)}&first_name=${encodeURIComponent(firstName)}&last_name=${encodeURIComponent(lastName)}&api_key=${HUNTER_API_KEY}`, { timeout: 10000 }).catch(() => null),
-      findEmailByDomain(domain, firstName, lastName),
-    ]);
-
-    const finderEmail = finderRes?.data?.data?.email;
-    const confidence = finderRes?.data?.data?.score || 0;
-
-    if (finderEmail && confidence >= 40) {
-      saveLog('success', `📧 Hunter finder: ${finderEmail} (${confidence}%)`);
-      return { email: finderEmail, website: foundWebsite };
-    }
-    if (domainEmail) {
-      saveLog('success', `📧 Hunter domain: ${domainEmail}`);
-      return { email: domainEmail, website: foundWebsite };
+    const r = await axios.get(`https://api.hunter.io/v2/email-finder?domain=${encodeURIComponent(domain)}&first_name=${encodeURIComponent(firstName)}&last_name=${encodeURIComponent(lastName)}&api_key=${HUNTER_API_KEY}`, { timeout: 8000 }).catch(() => null);
+    const email = r?.data?.data?.email;
+    const score = r?.data?.data?.score || 0;
+    if (email && score >= 40) {
+      saveLog('success', `📧 Hunter: ${email} (${score}%)`);
+      return { email, website: foundWebsite };
     }
   }
 
