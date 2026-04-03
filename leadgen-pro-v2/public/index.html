@@ -731,8 +731,17 @@
           const reviewBadge = (l.review_count > 0)
             ? `<span class="text-yellow-400">${l.review_count}</span>`
             : `<span class="text-gray-600">0</span>`;
+          // Color by confidence: high=green, medium=orange, low/accept_all=yellow
+          const emailColor = l.email_status === 'valid' ? 'text-green-400'
+            : l.email_confidence === 'high' ? 'text-green-300'
+            : l.email_confidence === 'medium' ? 'text-orange-400'
+            : 'text-yellow-400';
+          const emailTitle = l.email_status === 'valid' ? '✅ Confirmed valid by Hunter'
+            : l.email_confidence === 'high' ? '🟢 High — on author domain or website-confirmed'
+            : l.email_confidence === 'medium' ? '🟡 Medium — name match, not confirmed on site'
+            : '⚠️ Accept-all domain — likely real but not 100% confirmed';
           const contactCell = l.email
-            ? `<div class="flex items-center gap-1"><span class="text-green-400 truncate max-w-32" title="${escapeHtml(l.email)}">${escapeHtml(l.email)}</span><button onclick="navigator.clipboard.writeText('${escapeHtml(l.email||'')}').then(()=>{this.textContent='✓';setTimeout(()=>this.textContent='📋',2000)}).catch(()=>{})" class="text-gray-500 hover:text-green-400 shrink-0">📋</button></div>`
+            ? `<div class="flex items-center gap-1"><span class="${emailColor} truncate max-w-32" title="${emailTitle}: ${escapeHtml(l.email)}">${escapeHtml(l.email)}</span><button onclick="navigator.clipboard.writeText('${escapeHtml(l.email||'')}').then(()=>{this.textContent='✓';setTimeout(()=>this.textContent='📋',2000)}).catch(()=>{})" class="text-gray-500 hover:text-green-400 shrink-0">📋</button></div>`
             : l.website
               ? `<a href="${escapeHtml(l.website)}" target="_blank" class="text-blue-400 hover:underline truncate max-w-40 block" title="${escapeHtml(l.website)}">${escapeHtml(l.website.replace(/^https?:\/\/(www\.)?/,'').substring(0,35))}</a>`
               : `<span class="text-gray-600">—</span>`;

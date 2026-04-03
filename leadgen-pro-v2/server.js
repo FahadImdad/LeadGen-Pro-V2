@@ -1376,6 +1376,22 @@ async function runAmazonJob(jobId, dateFrom, dateTo, targetLeads, keyword) {
               return;
             }
 
+            // Language filter — skip non-English books (French, Spanish, German etc.)
+            // Detect by common non-English indicators in title
+            const nonEnglishPatterns = [
+              /\(French Edition\)/i, /\(Spanish Edition\)/i, /\(German Edition\)/i,
+              /\(Portuguese Edition\)/i, /\(Italian Edition\)/i, /\(Dutch Edition\)/i,
+              /\(Japanese Edition\)/i, /\(Korean Edition\)/i, /\(Chinese Edition\)/i,
+              /\(Arabic Edition\)/i, /\(Russian Edition\)/i, /\(Turkish Edition\)/i,
+              /\(Polish Edition\)/i, /\(Swedish Edition\)/i, /\(Norwegian Edition\)/i,
+              / Edición /i, / édition /i, / Ausgabe /i, /\bEdição\b/i,
+              /\bEdizione\b/i, /\bUitgave\b/i,
+            ];
+            if (nonEnglishPatterns.some(p => p.test(title))) {
+              await saveLog(jobId, 'info', `⏭️ SKIP (non-English book): ${title.substring(0, 60)}`);
+              return;
+            }
+
             // Review filter — skip books with more than 10 reviews (already established authors)
             const MAX_REVIEWS = 10;
             if (book.reviewCount > MAX_REVIEWS) {
@@ -1532,6 +1548,16 @@ async function runAmazonJob(jobId, dateFrom, dateTo, targetLeads, keyword) {
       ).run(verifiedCount, totalCount, jobId);
 
       await saveLog(jobId, 'success', `\n🎯 AMAZON COMPLETE! Verified: ${verifiedCount} / ${targetLeads} | Total processed: ${totalCount}`);
+
+      // Notify via OpenClaw webhook (WhatsApp message to Fahad)
+      try {
+        const notifyUrl = process.env.OPENCLAW_NOTIFY_URL;
+        if (notifyUrl) {
+          await axios.post(notifyUrl, {
+            message: `🎯 LeadGen job #${jobId} complete!\n✅ ${verifiedCount} verified leads collected\n📊 ${totalCount} authors processed\n\nOpen the app to export: https://leadgen-pro-v2.onrender.com`
+          }, { timeout: 10000 });
+        }
+      } catch(e) { console.error('Notify error:', e.message); }
 
     } catch (fatalErr) {
       console.error('Amazon background fatal:', fatalErr);
