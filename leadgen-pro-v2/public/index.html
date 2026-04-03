@@ -486,11 +486,11 @@
               <div class="grid grid-cols-3 gap-2 mt-2 text-center text-xs">
                 <div class="bg-gray-700 rounded p-1.5">
                   <div class="text-gray-400">Processed</div>
-                  <div class="font-bold text-blue-400">${job.total_count}</div>
+                  <div id="task-stat-processed-${job.id}" class="font-bold text-blue-400">${job.total_count}</div>
                 </div>
                 <div class="bg-gray-700 rounded p-1.5">
                   <div class="text-gray-400">Verified</div>
-                  <div class="font-bold text-green-400">${job.verified_count}</div>
+                  <div id="task-stat-verified-${job.id}" class="font-bold text-green-400">${job.verified_count}</div>
                 </div>
                 <div class="bg-gray-700 rounded p-1.5">
                   <div class="text-gray-400">Target</div>
@@ -1502,9 +1502,16 @@
             loadJobs('intent');
             loadJobs('amazon');
           }
+          // Live-update task card stat counters without full re-render (avoids scroll jump)
+          jobs.forEach(job => {
+            const processedEl = document.getElementById(`task-stat-processed-${job.id}`);
+            const verifiedEl = document.getElementById(`task-stat-verified-${job.id}`);
+            if (processedEl) processedEl.textContent = job.total_count || 0;
+            if (verifiedEl) verifiedEl.textContent = job.verified_count || 0;
+          });
           loadStats();
         } catch(e) {}
-      }, 5000);
+      }, 3000);
     });
   </script>
 </body>

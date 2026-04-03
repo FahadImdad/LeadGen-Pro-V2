@@ -1214,20 +1214,22 @@ async function runAmazonJob(jobId, dateFrom, dateTo, targetLeads, keyword) {
       // progress/lead/complete are handled via DB updates — no action needed
     };
 
-    // Resume from existing counts (in case of server restart)
-    const existingCounts = await db.prepare('SELECT verified_count, total_count FROM scrape_jobs WHERE id=?').get(jobId);
+    // Resume from existing counts + position (in case of server restart)
+    const existingCounts = await db.prepare('SELECT verified_count, total_count, resume_url_index, resume_page FROM scrape_jobs WHERE id=?').get(jobId);
     let verifiedCount = existingCounts?.verified_count || 0;
     let totalCount = existingCounts?.total_count || 0;
 
     try {
-      await saveLog(jobId, 'info', `🚀 ${verifiedCount > 0 ? `Resuming` : `Starting`} Amazon Author Lead Gen (job #${jobId}, target: ${targetLeads}, already verified: ${verifiedCount})...`);
+      const resuming = verifiedCount > 0;
+      await saveLog(jobId, 'info', `🚀 ${resuming ? 'Resuming' : 'Starting'} Amazon Author Lead Gen (job #${jobId}, target: ${targetLeads}, already verified: ${verifiedCount})...`);
 
-      let page_num = 1;
+      let page_num = existingCounts?.resume_page || 1;
       const maxPages = MAX_PAGES_PER_URL;
       let keepGoing = true;
       let consecutiveEmpty = 0;
-      let urlIndex = 0;
+      let urlIndex = existingCounts?.resume_url_index || 0;
       const seenAsinsThisRun = new Set();
+      if (resuming) await saveLog(jobId, 'info', `📍 Resuming from category ${urlIndex + 1}/${AMAZON_CATEGORY_NODES.length}, page ${page_num}`);
       await saveLog(jobId, 'info', `📚 Total categories: ${AMAZON_CATEGORY_NODES.length} × ${MAX_PAGES_PER_URL} pages = ${AMAZON_CATEGORY_NODES.length * MAX_PAGES_PER_URL * 50} max books`);
 
       try {
@@ -1268,13 +1270,17 @@ async function runAmazonJob(jobId, dateFrom, dateTo, targetLeads, keyword) {
           await saveLog(jobId, 'info', `📄 Category ${urlIndex+1}/${AMAZON_CATEGORY_NODES.length} — pages ${pageBatch.join(',')}...`);
           const batchResults = await Promise.all(pageBatch.map(p => scrapeOnePage(p)));
           page_num += 3;
+
+          // Save resume position after every batch
+          await db.prepare('UPDATE scrape_jobs SET resume_url_index=?, resume_page=? WHERE id=?').run(urlIndex, page_num, jobId);
+
           const pageBooks = batchResults.flat();
           await saveLog(jobId, 'info', `📚 Got ${pageBooks.length} books from ${pageBatch.length} pages`);
           if (pageBooks.length === 0) { consecutiveEmpty++; if(consecutiveEmpty>=3) { page_num = maxPages + 1; } continue; }
           consecutiveEmpty = 0;
 
           // Concurrency pool — keep CONCURRENCY slots busy
-          const CONCURRENCY = 25;
+          const CONCURRENCY = 10;
           await saveLog(jobId, 'info', `⚡ Processing ${pageBooks.length} authors with ${CONCURRENCY} concurrent workers...`);
 
           // Filter out already-seen ASINs (both DB and current run)
@@ -1457,13 +1463,12 @@ async function runAmazonJob(jobId, dateFrom, dateTo, targetLeads, keyword) {
               return;
             }
 
-            // Check for cross-job email duplicate
-            let isDuplicate = 0;
+            // Hard skip if this email already exists ANYWHERE in DB — no point saving or contacting again
             if (email && emailVerified) {
-              const emailExists = await db.prepare('SELECT id FROM amazon_leads WHERE email = ? AND job_id != ?').get(email, jobId);
+              const emailExists = await db.prepare('SELECT id FROM amazon_leads WHERE email = ?').get(email);
               if (emailExists) {
-                isDuplicate = 1;
-                await saveLog(jobId, 'warning', `♻️ DUPLICATE email: ${email}`);
+                await saveLog(jobId, 'info', `⏭️ SKIP (email already collected): ${email}`);
+                return;
               }
             }
 
@@ -1473,15 +1478,15 @@ async function runAmazonJob(jobId, dateFrom, dateTo, targetLeads, keyword) {
               await db.prepare(
                 `INSERT INTO amazon_leads (job_id, author, book_title, publish_date, review_count, email, email_verified, email_status, email_confidence, website, amazon_url, asin, is_duplicate)
                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-              ).run(jobId, author, title, book.publishDate || null, book.reviewCount || 0, email || null, emailVerified ? 1 : 0, emailStatus, emailConfidence || null, hasRealWebsite ? website : null, amazonUrl, asin, isDuplicate);
+              ).run(jobId, author, title, book.publishDate || null, book.reviewCount || 0, email || null, emailVerified ? 1 : 0, emailStatus, emailConfidence || null, hasRealWebsite ? website : null, amazonUrl, asin, 0);
             } catch (dbErr) {
-              await saveLog(jobId, 'warning', `⚠️ DB insert skipped (dupe): ${asin}`);
+              await saveLog(jobId, 'warning', `⚠️ DB insert skipped (dupe ASIN): ${asin}`);
               totalCount--;
               return;
             }
 
-            if (emailVerified && isDuplicate === 0) {
-              // Fully verified lead — counts toward target
+            if (emailVerified) {
+              // Verified unique email — counts toward target
               verifiedCount++;
               await db.prepare('UPDATE scrape_jobs SET verified_count = ?, total_count = ? WHERE id = ?').run(verifiedCount, totalCount, jobId);
               await saveLog(jobId, 'success', `✅ VERIFIED #${verifiedCount}: ${author} | ${email}`);
@@ -1491,8 +1496,7 @@ async function runAmazonJob(jobId, dateFrom, dateTo, targetLeads, keyword) {
               await saveLog(jobId, 'info', `🌐 WEBSITE-ONLY: ${author} | ${website}`);
             } else {
               await db.prepare('UPDATE scrape_jobs SET total_count = ? WHERE id = ?').run(totalCount, jobId);
-              const reason = isDuplicate ? 'duplicate email' : 'unverified email';
-              await saveLog(jobId, 'info', `📝 Saved (${reason}): ${author}`);
+              await saveLog(jobId, 'info', `📝 Saved (unverified): ${author}`);
             }
           } // end processBook
 
@@ -1947,6 +1951,10 @@ const PORT = process.env.PORT || 3000;
 (async () => {
   try {
     await db.init();
+
+    // Run migrations for new columns (ignore errors if columns already exist)
+    await db.exec("ALTER TABLE scrape_jobs ADD COLUMN resume_url_index INTEGER DEFAULT 0").catch(() => {});
+    await db.exec("ALTER TABLE scrape_jobs ADD COLUMN resume_page INTEGER DEFAULT 1").catch(() => {});
 
     // Find jobs that were running when server last died
     const staleJobs = await db.prepare(`SELECT * FROM scrape_jobs WHERE status = 'running'`).all();
