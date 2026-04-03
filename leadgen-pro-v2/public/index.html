@@ -1450,7 +1450,8 @@
         const jobId = data.jobId;
         if (!jobId) throw new Error('No job ID returned: ' + JSON.stringify(data));
         hideScrapeForm('amazon');
-        await loadJobs('amazon'); // immediately reload to show the running card
+        _lastJobsHash = ''; // force hash mismatch so next poll triggers reload
+        await loadJobs('amazon');
         startPolling(jobId, 'amazon');
       } catch (error) {
         console.error('Amazon search error:', error);
@@ -1543,12 +1544,12 @@
         } catch(e) {}
       }, 1000);
 
-      // Auto-refresh: only re-render if something actually changed (avoids scroll-jump)
+      // Auto-refresh: re-render when anything changes
       setInterval(async () => {
         try {
           const res = await fetch('/api/jobs');
           const jobs = await res.json();
-          const hash = jobs.map(j => j.id + j.status + j.verified_count + (j.is_paused||0)).join(',');
+          const hash = jobs.length + ':' + jobs.map(j => j.id + j.status + j.verified_count + (j.is_paused||0)).join(',');
           if (hash !== _lastJobsHash) {
             _lastJobsHash = hash;
             loadJobs('intent');
