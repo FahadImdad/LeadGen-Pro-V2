@@ -29,9 +29,9 @@
         <span id="versionText">loading...</span>
       </div>
       <div id="statsBar" class="mt-3 flex gap-4 justify-center text-xs text-gray-500">
-        <span>✅ <span id="stat-total-verified">—</span> verified emails</span>
-        <span>🌐 <span id="stat-total-websites">—</span> websites</span>
-        <span>📋 <span id="stat-total-tasks">—</span> tasks</span>
+        <span title="Total unique verified author emails across all jobs (no duplicates)">✅ <span id="stat-total-verified">—</span> verified emails</span>
+        <span title="Authors found with a website but no email yet — useful for manual outreach">🌐 <span id="stat-total-websites">—</span> websites</span>
+        <span title="Total Amazon author scraping tasks created">📋 <span id="stat-total-tasks">—</span> tasks</span>
       </div>
     </div>
 
@@ -457,6 +457,7 @@
                 <span class="text-xs text-gray-500">${fw}</span>
                 ${statusBadge(job)}
                 <span class="text-xs text-gray-400 ml-1">✅ ${job.verified_count}/${job.target_leads}</span>
+                <span class="text-xs text-gray-600">${job.date_from} → ${job.date_to}</span>
               </div>
               ${progressBar(job.verified_count, job.target_leads)}
             </div>
@@ -751,8 +752,9 @@
     function copyTaskEmails(jobId) {
       const data = window[`_taskLeads_${jobId}`];
       if (!data) { alert('No leads loaded'); return; }
-      const sheet = _inlineSheet[jobId] || 'high';
-      const emails = (data[sheet] || []).map(l => l.email).filter(Boolean).join(', ');
+      // Copy ALL verified emails (high + medium), not just active tab
+      const all = [...(data.high||[]), ...(data.medium||[])];
+      const emails = [...new Set(all.map(l => l.email).filter(Boolean))].join('\n');
       if (!emails) { alert('No emails to copy'); return; }
       navigator.clipboard.writeText(emails).then(() => {
         const btn = document.querySelector(`[onclick="copyTaskEmails(${jobId})"]`);

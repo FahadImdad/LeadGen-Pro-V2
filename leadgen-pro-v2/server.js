@@ -1167,11 +1167,10 @@ app.get('/api/health', async (req, res) => {
 
 // GET /api/stats — dashboard summary
 app.get('/api/stats', async (req, res) => {
-  const total = await db.prepare('SELECT COUNT(*) as c FROM amazon_leads').get()?.c || 0;
-  const verified = await db.prepare('SELECT COUNT(*) as c FROM amazon_leads WHERE email_verified=1').get()?.c || 0;
-  const websites = await db.prepare('SELECT COUNT(*) as c FROM amazon_leads WHERE website IS NOT NULL').get()?.c || 0;
-  const jobs = await db.prepare('SELECT COUNT(*) as c FROM scrape_jobs').get()?.c || 0;
-  res.json({ total, verified, websites, jobs });
+  const verified = await db.prepare('SELECT COUNT(*) as c FROM amazon_leads WHERE email_verified=1 AND is_duplicate=0').get()?.c || 0;
+  const websites = await db.prepare('SELECT COUNT(*) as c FROM amazon_leads WHERE website IS NOT NULL AND is_duplicate=0').get()?.c || 0;
+  const jobs = await db.prepare("SELECT COUNT(*) as c FROM scrape_jobs WHERE framework='amazon'").get()?.c || 0;
+  res.json({ verified, websites, jobs });
 });
 
 // GET /api/version — returns git commit info baked at build time
