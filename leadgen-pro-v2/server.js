@@ -1559,7 +1559,7 @@ async function runAmazonJob(jobId, dateFrom, dateTo, targetLeads, keyword) {
         const notifyUrl = process.env.OPENCLAW_NOTIFY_URL;
         if (notifyUrl) {
           await axios.post(notifyUrl, {
-            message: `🎯 LeadGen job #${jobId} complete!\n✅ ${verifiedCount} verified leads collected\n📊 ${totalCount} authors processed\n\nOpen the app to export: https://leadgen-pro-v2.onrender.com`
+            message: `🎯 LeadGen Task #${jobId} complete!\n✅ ${verifiedCount} verified leads collected\n📊 ${totalCount} authors processed\n\nOpen the app to export: https://leadgen-pro-v2.onrender.com`
           }, { timeout: 10000 });
         }
       } catch(e) { console.error('Notify error:', e.message); }
