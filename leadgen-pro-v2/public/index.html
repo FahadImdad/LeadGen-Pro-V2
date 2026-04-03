@@ -893,12 +893,27 @@
     }
 
     async function startPolling(jobId, framework) {
-      lastLogId = 0;
       activeJobId = jobId;
       window._lastAmazonVerified = 0;
       window._lastIntentVerified = 0;
       if (framework === 'amazon') { activeSheet = 'high'; switchSheet('high'); }
       clearInterval(pollInterval);
+
+      // Start from latest log id so we only get NEW logs going forward
+      try {
+        const cr = await fetch(`/api/jobs/${jobId}/logs?since=0&countOnly=1`);
+        const cd = await cr.json();
+        // Get the actual last log id by fetching the last entry
+        if (cd.total > 0) {
+          const lr = await fetch(`/api/jobs/${jobId}/logs?since=${Math.max(0, cd.total - 2)}`);
+          const ld = await lr.json();
+          const logs = ld.logs || [];
+          lastLogId = logs.length > 0 ? logs[logs.length - 1].id : 0;
+        } else {
+          lastLogId = 0;
+        }
+      } catch(e) { lastLogId = 0; }
+
       pollInterval = setInterval(async () => {
         if (activeJobId !== jobId) { clearInterval(pollInterval); return; } // guard stale intervals
         try {
@@ -1530,11 +1545,7 @@
           const running = jobs.find(j => j.status === 'running');
           if (running && !activeJobId) {
             console.log(`Auto-attaching poll to running job #${running.id}`);
-            // Get last log id so we only stream new logs
-            const logRes = await fetch(`/api/jobs/${running.id}/logs?since=0&countOnly=1`);
-            const logData = await logRes.json();
-            lastLogId = Math.max(0, (logData.total || 0) - 1);
-            activeJobId = running.id;
+            // startPolling will set lastLogId to current tail automatically
             startPolling(running.id, running.framework || 'amazon');
           }
         } catch(e) {}
