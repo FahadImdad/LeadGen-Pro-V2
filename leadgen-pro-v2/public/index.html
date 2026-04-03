@@ -745,9 +745,10 @@
             : l.website
               ? `<a href="${escapeHtml(l.website)}" target="_blank" class="text-blue-400 hover:underline truncate max-w-40 block" title="${escapeHtml(l.website)}">${escapeHtml(l.website.replace(/^https?:\/\/(www\.)?/,'').substring(0,35))}</a>`
               : `<span class="text-gray-600">—</span>`;
+          const safeWebsite = l.website ? l.website.replace(/^http:\/\//,'https://') : null;
           const linksCell = [
-            l.website ? `<a href="${escapeHtml(l.website)}" target="_blank" class="text-blue-400 hover:text-blue-300" title="Author website">🌐</a>` : '',
-            l.amazon_url ? `<a href="${escapeHtml(l.amazon_url)}" target="_blank" class="text-orange-400 hover:text-orange-300" title="Amazon">📚</a>` : ''
+            safeWebsite ? `<a href="${escapeHtml(safeWebsite)}" target="_blank" rel="noopener noreferrer" class="text-blue-400 hover:text-blue-300" title="${escapeHtml(safeWebsite)}">🌐</a>` : '',
+            l.amazon_url ? `<a href="${escapeHtml(l.amazon_url)}" target="_blank" rel="noopener noreferrer" class="text-orange-400 hover:text-orange-300" title="Amazon">📚</a>` : ''
           ].filter(Boolean).join(' ');
           const pubDate = l.publish_date ? l.publish_date.substring(0,10) : '—';
           return `<tr class="${i%2===0?'bg-gray-800':'bg-gray-850'} border-t border-gray-700/50 hover:bg-gray-700">

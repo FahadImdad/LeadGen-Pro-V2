@@ -1054,7 +1054,7 @@ app.get('/api/jobs/:jobId/leads', async (req, res) => {
   let leads;
   if (framework === 'amazon') {
     // Return verified leads first, then website-only leads (no email but has website)
-    leads = await db.prepare(`SELECT * FROM amazon_leads WHERE job_id = ? AND is_duplicate = 0 AND (email_verified = 1 OR (email IS NULL AND website IS NOT NULL)) ORDER BY email_verified DESC, id`).all(jobId);
+    leads = await db.prepare(`SELECT * FROM amazon_leads WHERE job_id = ? AND (is_duplicate = 0 OR is_duplicate IS NULL) AND (email_verified = 1 OR (email IS NULL AND website IS NOT NULL)) ORDER BY email_verified DESC, id`).all(jobId);
   } else {
     leads = await db.prepare('SELECT * FROM intent_leads WHERE job_id = ? AND email_verified = 1 AND is_duplicate = 0 ORDER BY id').all(jobId);
   }
