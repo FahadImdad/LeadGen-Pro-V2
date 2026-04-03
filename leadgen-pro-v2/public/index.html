@@ -509,14 +509,6 @@
               <input type="text" id="task-search-${job.id}" placeholder="🔍 Search author, email, book..." oninput="onTaskSearch(${job.id})"
                 class="w-full bg-gray-700 border border-gray-600 rounded px-2 py-1 text-xs focus:border-blue-500 focus:outline-none">
             </div>
-            <!-- Language Filter -->
-            <div class="flex items-center gap-2 mb-2 text-xs">
-              <label class="flex items-center gap-1.5 cursor-pointer select-none">
-                <input type="checkbox" id="filter-english-${job.id}" onchange="renderInlineLeads(${job.id}, _inlineSheet[${job.id}]||'high')" class="accent-blue-500">
-                <span class="text-gray-400">🇬🇧 English only</span>
-              </label>
-              <span class="text-gray-600 text-xs">(uncheck to include French/Spanish/etc.)</span>
-            </div>
             <!-- Sheet Tabs -->
             <div class="flex gap-1 mb-1 border-b border-gray-700 items-end">
               <button onclick="switchInlineSheet(${job.id},'high')" id="inline-tab-high-${job.id}" class="px-3 py-1.5 text-xs font-bold rounded-t bg-green-700 text-white border-b-2 border-green-400">🟢 High <span id="inline-count-high-${job.id}" class="ml-1 bg-green-900 px-1 rounded-full">0</span></button>
@@ -645,9 +637,7 @@
       const searchQ = (document.getElementById(`task-search-${jobId}`)?.value || '').toLowerCase().trim();
       if (searchQ) {
         // Search across ALL tabs — show results from all combined
-        const englishOnlySearch = document.getElementById(`filter-english-${jobId}`)?.checked || false;
         let allLeads = [...(data.high||[]), ...(data.medium||[]), ...(data.website||[])];
-        if (englishOnlySearch) allLeads = allLeads.filter(l => !l.is_non_english);
         const matched = allLeads.filter(l =>
           (l.author||'').toLowerCase().includes(searchQ) ||
           (l.email||'').toLowerCase().includes(searchQ) ||
@@ -718,9 +708,7 @@
       const data = window[`_taskLeads_${jobId}`];
       if (!data) { container.innerHTML = '<div class="text-xs text-gray-600 py-4 text-center">No leads yet.</div>'; return; }
       const searchQ = (document.getElementById(`task-search-${jobId}`)?.value || '').toLowerCase().trim();
-      const englishOnly = document.getElementById(`filter-english-${jobId}`)?.checked || false;
       let leads = data[sheet] || [];
-      if (englishOnly) leads = leads.filter(l => !l.is_non_english);
       if (searchQ) leads = leads.filter(l =>
         (l.author||'').toLowerCase().includes(searchQ) ||
         (l.email||'').toLowerCase().includes(searchQ) ||
@@ -762,9 +750,8 @@
             l.amazon_url ? `<a href="${escapeHtml(l.amazon_url)}" target="_blank" class="text-orange-400 hover:text-orange-300" title="Amazon">📚</a>` : ''
           ].filter(Boolean).join(' ');
           const pubDate = l.publish_date ? l.publish_date.substring(0,10) : '—';
-          const langFlag = l.is_non_english ? '<span title="Non-English book" class="text-xs">🌍</span>' : '';
           return `<tr class="${i%2===0?'bg-gray-800':'bg-gray-850'} border-t border-gray-700/50 hover:bg-gray-700">
-            <td class="px-2 py-1.5 text-gray-500">${i+1} ${langFlag}</td>
+            <td class="px-2 py-1.5 text-gray-500">${i+1}</td>
             <td class="px-2 py-1.5 text-white font-medium"><div class="truncate max-w-24" title="${escapeHtml(l.author||'')}">${escapeHtml(l.author||'')}</div></td>
             <td class="px-2 py-1.5 text-gray-300"><div class="truncate max-w-36" title="${escapeHtml(l.book_title||'')}">${escapeHtml((l.book_title||'').substring(0,45))}${(l.book_title||'').length>45?'…':''}</div></td>
             <td class="px-2 py-1.5 text-gray-400 whitespace-nowrap text-xs">${pubDate}</td>
