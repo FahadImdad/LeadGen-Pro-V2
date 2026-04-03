@@ -467,7 +467,7 @@
               ${!isRunning && job.framework === 'amazon' && (job.status === 'interrupted' || job.status === 'error') ? `<button onclick="restartTask(${job.id},'${framework}')" class="px-2 py-1 rounded bg-blue-600 hover:bg-blue-700 text-xs text-white" title="Continue from where it left off">🔄 Resume</button>` : ''}
               <a href="/api/export/${job.id}?framework=${job.framework}&verifiedOnly=true" class="px-2 py-1 rounded bg-green-700 hover:bg-green-800 text-xs text-white">📥</a>
               <button onclick="deleteJob(${job.id},'${framework}')" class="px-2 py-1 rounded bg-gray-600 hover:bg-red-700 text-xs text-white">🗑</button>
-              <span class="px-2 py-1 text-xs text-gray-400" id="toggle-btn-${job.id}">${expanded ? '▲' : '▼'}</span>
+              <button onclick="toggleTask(${job.id},'${framework}')" class="px-2 py-1 text-xs text-gray-400 hover:text-white" id="toggle-btn-${job.id}">${expanded ? '▲' : '▼'}</button>
             </div>
           </div>
           <!-- Expandable content — full AI Console + Leads -->
@@ -656,21 +656,31 @@
             <th class="px-2 py-1.5 text-left text-gray-400 font-semibold">#</th>
             <th class="px-2 py-1.5 text-left text-gray-400 font-semibold">Author</th>
             <th class="px-2 py-1.5 text-left text-gray-400 font-semibold">Book</th>
+            <th class="px-2 py-1.5 text-left text-gray-400 font-semibold">📅</th>
+            <th class="px-2 py-1.5 text-left text-gray-400 font-semibold">⭐</th>
             <th class="px-2 py-1.5 text-left text-gray-400 font-semibold">Email / Site</th>
-            <th class="px-2 py-1.5 text-left text-gray-400 font-semibold">Link</th>
+            <th class="px-2 py-1.5 text-left text-gray-400 font-semibold">Links</th>
           </tr></thead>
           <tbody>${matched.map((l,i) => {
             const conf = l.email_confidence;
             const badge = conf==='high'?'🟢':conf==='medium'?'🟡':'🌐';
+            const pubDate = l.publish_date ? l.publish_date.substring(0,10) : '—';
+            const reviewBadge = (l.review_count > 0) ? `<span class="text-yellow-400">${l.review_count}</span>` : `<span class="text-gray-600">0</span>`;
             const contact = l.email
-              ? `<div class="flex items-center gap-1"><span class="text-green-400 truncate max-w-36">${escapeHtml(l.email)}</span><button onclick="navigator.clipboard.writeText('${escapeHtml(l.email||'')}').then(()=>{this.textContent='✓';setTimeout(()=>this.textContent='📋',2000)}).catch(()=>{})" class="text-gray-500 hover:text-green-400 shrink-0">📋</button></div>`
-              : l.website ? `<a href="${escapeHtml(l.website)}" target="_blank" class="text-blue-400 hover:underline truncate max-w-36 block">${escapeHtml(l.website.replace(/^https?:\/\//,''))}</a>` : '—';
+              ? `<div class="flex items-center gap-1"><span class="text-green-400 truncate max-w-32">${escapeHtml(l.email)}</span><button onclick="navigator.clipboard.writeText('${escapeHtml(l.email||'')}').then(()=>{this.textContent='✓';setTimeout(()=>this.textContent='📋',2000)}).catch(()=>{})" class="text-gray-500 hover:text-green-400 shrink-0">📋</button></div>`
+              : l.website ? `<a href="${escapeHtml(l.website)}" target="_blank" class="text-blue-400 hover:underline truncate max-w-36 block">${escapeHtml(l.website.replace(/^https?:\/\/(www\.)?/,'').substring(0,35))}</a>` : '—';
+            const links = [
+              l.website ? `<a href="${escapeHtml(l.website)}" target="_blank" class="text-blue-400 hover:text-blue-300">🌐</a>` : '',
+              l.amazon_url ? `<a href="${escapeHtml(l.amazon_url)}" target="_blank" class="text-orange-400 hover:text-orange-300">📚</a>` : ''
+            ].filter(Boolean).join(' ');
             return `<tr class="${i%2===0?'bg-gray-800':'bg-gray-850'} border-t border-gray-700/50 hover:bg-gray-700">
               <td class="px-2 py-1.5 text-gray-500">${badge} ${i+1}</td>
-              <td class="px-2 py-1.5 text-white font-medium"><div class="truncate max-w-28" title="${escapeHtml(l.author||'')}">${escapeHtml(l.author||'')}</div></td>
-              <td class="px-2 py-1.5 text-gray-300"><div class="truncate max-w-40" title="${escapeHtml(l.book_title||'')}">${escapeHtml((l.book_title||'').substring(0,50))}${(l.book_title||'').length>50?'…':''}</div></td>
+              <td class="px-2 py-1.5 text-white font-medium"><div class="truncate max-w-24" title="${escapeHtml(l.author||'')}">${escapeHtml(l.author||'')}</div></td>
+              <td class="px-2 py-1.5 text-gray-300"><div class="truncate max-w-36" title="${escapeHtml(l.book_title||'')}">${escapeHtml((l.book_title||'').substring(0,45))}${(l.book_title||'').length>45?'…':''}</div></td>
+              <td class="px-2 py-1.5 text-gray-400 whitespace-nowrap text-xs">${pubDate}</td>
+              <td class="px-2 py-1.5 text-center">${reviewBadge}</td>
               <td class="px-2 py-1.5">${contact}</td>
-              <td class="px-2 py-1.5"><a href="${escapeHtml(l.amazon_url||'#')}" target="_blank" class="text-blue-400 hover:text-blue-300">📚</a></td>
+              <td class="px-2 py-1.5 whitespace-nowrap">${links}</td>
             </tr>`;
           }).join('')}</tbody></table>`;
         return;
@@ -706,6 +716,7 @@
           <th class="px-2 py-1.5 text-left text-gray-400 font-semibold">#</th>
           <th class="px-2 py-1.5 text-left text-gray-400 font-semibold">Author</th>
           <th class="px-2 py-1.5 text-left text-gray-400 font-semibold">Book</th>
+          <th class="px-2 py-1.5 text-left text-gray-400 font-semibold">📅</th>
           <th class="px-2 py-1.5 text-left text-gray-400 font-semibold">⭐</th>
           <th class="px-2 py-1.5 text-left text-gray-400 font-semibold">${isWebsiteTab ? 'Website' : 'Email'}</th>
           <th class="px-2 py-1.5 text-left text-gray-400 font-semibold">Links</th>
@@ -723,10 +734,12 @@
             l.website ? `<a href="${escapeHtml(l.website)}" target="_blank" class="text-blue-400 hover:text-blue-300" title="Author website">🌐</a>` : '',
             l.amazon_url ? `<a href="${escapeHtml(l.amazon_url)}" target="_blank" class="text-orange-400 hover:text-orange-300" title="Amazon">📚</a>` : ''
           ].filter(Boolean).join(' ');
+          const pubDate = l.publish_date ? l.publish_date.substring(0,10) : '—';
           return `<tr class="${i%2===0?'bg-gray-800':'bg-gray-850'} border-t border-gray-700/50 hover:bg-gray-700">
             <td class="px-2 py-1.5 text-gray-500">${i+1}</td>
             <td class="px-2 py-1.5 text-white font-medium"><div class="truncate max-w-24" title="${escapeHtml(l.author||'')}">${escapeHtml(l.author||'')}</div></td>
             <td class="px-2 py-1.5 text-gray-300"><div class="truncate max-w-36" title="${escapeHtml(l.book_title||'')}">${escapeHtml((l.book_title||'').substring(0,45))}${(l.book_title||'').length>45?'…':''}</div></td>
+            <td class="px-2 py-1.5 text-gray-400 whitespace-nowrap text-xs">${pubDate}</td>
             <td class="px-2 py-1.5 text-center">${reviewBadge}</td>
             <td class="px-2 py-1.5">${contactCell}</td>
             <td class="px-2 py-1.5 whitespace-nowrap">${linksCell}</td>
