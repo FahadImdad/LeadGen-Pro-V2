@@ -1376,8 +1376,7 @@ async function runAmazonJob(jobId, dateFrom, dateTo, targetLeads, keyword) {
               return;
             }
 
-            // Language filter — skip non-English books (French, Spanish, German etc.)
-            // Detect by common non-English indicators in title
+            // Detect language (tag only — don't skip)
             const nonEnglishPatterns = [
               /\(French Edition\)/i, /\(Spanish Edition\)/i, /\(German Edition\)/i,
               /\(Portuguese Edition\)/i, /\(Italian Edition\)/i, /\(Dutch Edition\)/i,
@@ -1387,10 +1386,7 @@ async function runAmazonJob(jobId, dateFrom, dateTo, targetLeads, keyword) {
               / Edición /i, / édition /i, / Ausgabe /i, /\bEdição\b/i,
               /\bEdizione\b/i, /\bUitgave\b/i,
             ];
-            if (nonEnglishPatterns.some(p => p.test(title))) {
-              await saveLog(jobId, 'info', `⏭️ SKIP (non-English book): ${title.substring(0, 60)}`);
-              return;
-            }
+            const isNonEnglish = nonEnglishPatterns.some(p => p.test(title));
 
             // Review filter — skip books with more than 10 reviews (already established authors)
             const MAX_REVIEWS = 10;
@@ -1511,9 +1507,9 @@ async function runAmazonJob(jobId, dateFrom, dateTo, targetLeads, keyword) {
             totalCount++;
             try {
               await db.prepare(
-                `INSERT INTO amazon_leads (job_id, author, book_title, publish_date, review_count, email, email_verified, email_status, email_confidence, website, amazon_url, asin, is_duplicate)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-              ).run(jobId, author, title, book.publishDate || null, book.reviewCount || 0, email || null, emailVerified ? 1 : 0, emailStatus, emailConfidence || null, hasRealWebsite ? website : null, amazonUrl, asin, 0);
+                `INSERT INTO amazon_leads (job_id, author, book_title, publish_date, review_count, email, email_verified, email_status, email_confidence, website, amazon_url, asin, is_duplicate, is_non_english)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+              ).run(jobId, author, title, book.publishDate || null, book.reviewCount || 0, email || null, emailVerified ? 1 : 0, emailStatus, emailConfidence || null, hasRealWebsite ? website : null, amazonUrl, asin, 0, isNonEnglish ? 1 : 0);
             } catch (dbErr) {
               await saveLog(jobId, 'warning', `⚠️ DB insert skipped (dupe ASIN): ${asin}`);
               totalCount--;
@@ -2006,6 +2002,7 @@ const PORT = process.env.PORT || 3000;
     // Run migrations for new columns (ignore errors if columns already exist)
     await db.exec("ALTER TABLE scrape_jobs ADD COLUMN resume_url_index INTEGER DEFAULT 0").catch(() => {});
     await db.exec("ALTER TABLE scrape_jobs ADD COLUMN resume_page INTEGER DEFAULT 1").catch(() => {});
+    await db.exec("ALTER TABLE amazon_leads ADD COLUMN is_non_english INTEGER DEFAULT 0").catch(() => {});
 
     // Find jobs that were running when server last died
     const staleJobs = await db.prepare(`SELECT * FROM scrape_jobs WHERE status = 'running'`).all();

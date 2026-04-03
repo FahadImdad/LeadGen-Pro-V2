@@ -43,6 +43,7 @@ const SCHEMA = `
     amazon_url TEXT,
     asin TEXT,
     is_duplicate INTEGER DEFAULT 0,
+    is_non_english INTEGER DEFAULT 0,
     scraped_at TEXT DEFAULT CURRENT_TIMESTAMP
   );
   CREATE UNIQUE INDEX IF NOT EXISTS idx_amazon_asin ON amazon_leads(asin);
