@@ -160,10 +160,9 @@ async function verifyEmail(email) {
       { timeout: 10000 }
     );
     const status = response.data?.data?.status;
-    return {
-      valid: status === 'valid', // 100% verified only — accept_all means server accepts everything, can't confirm person
-      status: status
-    };
+    // 'valid' = 100% confirmed. 'accept_all' = server accepts all (very common on custom domains, still a real lead).
+    const valid = status === 'valid' || status === 'accept_all';
+    return { valid, status };
   } catch (error) {
     console.error('Hunter error:', error.message);
     return { valid: false };
@@ -658,19 +657,20 @@ function isRealAuthorWebsite(url) {
 }
 
 function isBlockedEmail(email) {
+  if (!email || typeof email !== 'string') return true;
   if (email.match(/\.(png|jpg|jpeg|gif|svg|webp|js|css|min\.js|ts)(@|$)/i)) return true;
+  // Block placeholder/example domains
+  const domain = (email.split('@')[1] || '').toLowerCase();
+  if (/^(example\.com|test\.com|domain\.com|email\.com|yoursite\.com|yourdomain\.com|placeholder\.com|sample\.com)$/.test(domain)) return true;
+  // Block placeholder local parts
+  const local = email.split('@')[0].toLowerCase();
+  if (/^(email|user|name|yourname|your\.name|your-name|firstname|lastname|your\.email|youremail|someone|test|info@info|hello@hello)$/.test(local)) return true;
   // Block generic/role emails — not personal author emails
-  if (/^(user|admin|noreply|no-reply|test|example|support|help|sales|webmaster|postmaster|hostmaster|abuse|privacy|legal|billing|accounts|newsletter|news|media|press|pr|marketing|office|staff|team|service|enquiries|enquiry|info@info|hello@hello)@/i.test(email)) return true;
+  if (/^(user|admin|noreply|no-reply|test|example|support|help|sales|webmaster|postmaster|hostmaster|abuse|privacy|legal|billing|accounts|newsletter|news|media|press|pr|marketing|office|staff|team|service|enquiries|enquiry)@/i.test(email)) return true;
   if (/\d+\.\d+\.\d+/.test(email)) return true;
-  if (email.split('@')[0].length > 40) return true;
+  if (local.length > 40) return true;
   if (BLOCKED_DOMAINS.some(d => email.toLowerCase().includes(d))) return true;
-  const domain = email.split('@')[1] || '';
   if (!domain.includes('.')) return true;
-  // Block emails from known generic hosting/platform domains
-  if (/^(gmail\.com|yahoo\.com|hotmail\.com|outlook\.com|icloud\.com|me\.com|mac\.com|aol\.com|protonmail\.com|tutanota\.com)$/.test(domain)) {
-    // Allow gmail etc ONLY if local part contains author name fragment
-    return false; // will be validated against author name in findAuthorContact
-  }
   return false;
 }
 
@@ -1907,8 +1907,8 @@ const PORT = process.env.PORT || 3000;
 (async () => {
   try {
     await db.init();
-    await db.exec("UPDATE scrape_jobs SET status='error', completed_at=CURRENT_TIMESTAMP WHERE status='running'");
-    console.log('✅ Cleaned up stale running jobs');
+    await db.exec("UPDATE scrape_jobs SET status='interrupted', completed_at=CURRENT_TIMESTAMP WHERE status='running'");
+    console.log('✅ Cleaned up stale running jobs (marked interrupted)');
   } catch(e) {
     console.log('⚠️ DB init warning:', e.message);
   }

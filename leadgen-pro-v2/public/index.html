@@ -412,6 +412,7 @@
     function statusBadge(job) {
       if (job.status === 'complete') return '<span class="px-2 py-0.5 rounded-full text-xs bg-green-900 text-green-300">✅ Complete</span>';
       if (job.status === 'cancelled') return '<span class="px-2 py-0.5 rounded-full text-xs bg-red-900 text-red-300">✕ Cancelled</span>';
+      if (job.status === 'interrupted') return '<span class="px-2 py-0.5 rounded-full text-xs bg-orange-900 text-orange-300" title="Server restarted — job was stopped mid-run">⚠️ Interrupted</span>';
       if (job.status === 'error') return '<span class="px-2 py-0.5 rounded-full text-xs bg-red-900 text-red-300">❌ Error</span>';
       if (job.is_paused || 0) return '<span class="px-2 py-0.5 rounded-full text-xs bg-yellow-900 text-yellow-300">⏸ Paused</span>';
       return '<span class="px-2 py-0.5 rounded-full text-xs bg-blue-900 text-blue-300 animate-pulse">🟢 Running</span>';
@@ -507,10 +508,28 @@
                 class="w-full bg-gray-700 border border-gray-600 rounded px-2 py-1 text-xs focus:border-blue-500 focus:outline-none">
             </div>
             <!-- Sheet Tabs -->
-            <div class="flex gap-1 mb-1 border-b border-gray-700">
+            <div class="flex gap-1 mb-1 border-b border-gray-700 items-end">
               <button onclick="switchInlineSheet(${job.id},'high')" id="inline-tab-high-${job.id}" class="px-3 py-1.5 text-xs font-bold rounded-t bg-green-700 text-white border-b-2 border-green-400">🟢 High <span id="inline-count-high-${job.id}" class="ml-1 bg-green-900 px-1 rounded-full">0</span></button>
               <button onclick="switchInlineSheet(${job.id},'medium')" id="inline-tab-medium-${job.id}" class="px-3 py-1.5 text-xs font-bold rounded-t bg-gray-700 text-gray-300 border-b-2 border-transparent">🟡 Medium <span id="inline-count-medium-${job.id}" class="ml-1 bg-gray-600 px-1 rounded-full">0</span></button>
               <button onclick="switchInlineSheet(${job.id},'website')" id="inline-tab-website-${job.id}" class="px-3 py-1.5 text-xs font-bold rounded-t bg-gray-700 text-gray-300 border-b-2 border-transparent">🌐 Website <span id="inline-count-website-${job.id}" class="ml-1 bg-gray-600 px-1 rounded-full">0</span></button>
+              <div class="ml-auto mb-1 relative group">
+                <button class="w-5 h-5 rounded-full bg-gray-600 hover:bg-gray-500 text-gray-300 text-xs flex items-center justify-center leading-none">ⓘ</button>
+                <div class="absolute right-0 bottom-7 w-72 bg-gray-900 border border-gray-600 rounded-lg p-3 text-xs text-gray-300 shadow-xl hidden group-hover:block z-50">
+                  <div class="font-bold text-white mb-2">📊 Lead Quality Tabs</div>
+                  <div class="mb-2">
+                    <span class="text-green-400 font-bold">🟢 High</span> — Email on author's own domain (e.g. hello@stevecorney.com), or Gmail/Yahoo confirmed on their website. Best leads — almost guaranteed real.
+                    <div class="text-gray-500 mt-0.5">Columns: #, Author, Book, Email, Link</div>
+                  </div>
+                  <div class="mb-2">
+                    <span class="text-yellow-400 font-bold">🟡 Medium</span> — Gmail/Yahoo where author's name is in the email (e.g. johnsmith@gmail.com) but not confirmed on their site. Likely real, less certain.
+                    <div class="text-gray-500 mt-0.5">Columns: #, Author, Book, Email, Link</div>
+                  </div>
+                  <div>
+                    <span class="text-blue-400 font-bold">🌐 Website</span> — Author has a website but no email found. Useful for manual outreach.
+                    <div class="text-gray-500 mt-0.5">Columns: #, Author, Book, Website, Link</div>
+                  </div>
+                </div>
+              </div>
             </div>
             <!-- Leads Table -->
             <div id="task-leads-${job.id}" class="overflow-x-auto rounded-b bg-gray-800" style="max-height:350px;overflow-y:auto;">
