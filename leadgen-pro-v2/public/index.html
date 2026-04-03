@@ -570,17 +570,22 @@
       try {
         const logEl = document.getElementById(`task-log-${jobId}`);
         if (logEl) {
-          const r = await fetch(`/api/jobs/${jobId}/logs?since=0`);
+          // Fetch total log count first to get the last 50
+          const countRes = await fetch(`/api/jobs/${jobId}/logs?since=0&countOnly=1`);
+          const countData = await countRes.json();
+          const totalLogs = countData.total || 0;
+          const since = Math.max(0, totalLogs - 50);
+          const r = await fetch(`/api/jobs/${jobId}/logs?since=${since}`);
           const data = await r.json();
           const logs = data.logs || [];
           if (logs.length === 0) {
             logEl.innerHTML = '<span class="text-gray-600">No logs yet.</span>';
           } else {
             const colors = {success:'text-green-400',error:'text-red-400',warning:'text-yellow-400',info:'text-gray-300',hunter:'text-blue-400',brightdata:'text-cyan-400'};
-            logEl.innerHTML = logs.slice(-50).map(l => {
+            logEl.innerHTML = logs.map(l => {
               let ts = '';
               if (l.created_at) {
-                const d = new Date(l.created_at.replace(' ','T') + 'Z'); // treat DB timestamp as UTC
+                const d = new Date(l.created_at.replace(' ','T') + 'Z');
                 ts = d.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', second:'2-digit', hour12:false});
               }
               return `<div class="${colors[l.level]||'text-gray-400'}">[${ts}] ${escapeHtml(l.message)}</div>`;

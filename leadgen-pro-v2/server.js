@@ -1065,6 +1065,13 @@ app.get('/api/jobs/:jobId/leads', async (req, res) => {
 app.get('/api/jobs/:jobId/logs', async (req, res) => {
   const { jobId } = req.params;
   const since = parseInt(req.query.since || '0');
+  const countOnly = req.query.countOnly === '1';
+
+  if (countOnly) {
+    const row = await db.prepare('SELECT COUNT(*) as cnt FROM job_logs WHERE job_id = ?').get(jobId);
+    return res.json({ total: Number(row?.cnt || row?.c || 0) });
+  }
+
   const logs = await db.prepare('SELECT * FROM job_logs WHERE job_id = ? AND id > ? ORDER BY id ASC LIMIT 100').all(jobId, since);
   const job = await db.prepare('SELECT * FROM scrape_jobs WHERE id = ?').get(jobId);
   res.json({ logs, job });
