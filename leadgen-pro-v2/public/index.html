@@ -1446,11 +1446,12 @@
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ dateFrom, dateTo, targetLeads: currentAmazonTarget })
         });
-        const { jobId } = await res.json();
-        startPolling(jobId, 'amazon');
+        const data = await res.json();
+        const jobId = data.jobId;
+        if (!jobId) throw new Error('No job ID returned: ' + JSON.stringify(data));
         hideScrapeForm('amazon');
-        // Load task list to show new running card
-        setTimeout(() => loadJobs('amazon'), 800);
+        await loadJobs('amazon'); // immediately reload to show the running card
+        startPolling(jobId, 'amazon');
       } catch (error) {
         console.error('Amazon search error:', error);
         addLog('❌ Error: ' + error.message, 'red', 'amazon');
