@@ -1535,6 +1535,12 @@ async function runAmazonJob(jobId, dateFrom, dateTo, targetLeads, keyword) {
             }
           } // end processBook
 
+          // Stop outer loop once target reached
+          if (verifiedCount >= targetLeads) {
+            keepGoing = false;
+            await saveLog(jobId, 'success', `🎯 Target of ${targetLeads} reached — stopping.`);
+          }
+
           await new Promise(r => setTimeout(r, 500));
         }
       } catch (error) {
