@@ -712,44 +712,17 @@ function isLikelyAuthorEmail(email, authorName) {
 // Amazon category node IDs — each supports 400 pages of search results (~16,000 books per category)
 // URL format: https://www.amazon.com/s?i=stripbooks&rh=n:NODE_ID&page=N&s=date-desc-rank
 const AMAZON_CATEGORY_NODES = [
+  // Top categories — highest author website / email rate (business/self-help authors maintain personal sites)
   { id: '2635',      name: 'Business & Money' },
-  { id: '4736',      name: 'Self Help' },
-  { id: '6',         name: 'Health & Fitness' },
-  { id: '486994011', name: 'Biographies' },
-  { id: '22',        name: 'Religion & Spirituality' },
-  { id: '4919',      name: 'Parenting' },
-  { id: '75',        name: 'Science & Math' },
-  { id: '9',         name: 'History' },
-  { id: '11232',     name: 'Politics & Social' },
-  { id: '2642',      name: 'Travel' },
-  { id: '4677',      name: 'Education' },
-  { id: '3',         name: 'Children' },
-  { id: '4',         name: 'Computers & Tech' },
-  { id: '173507',    name: 'Arts & Photography' },
-  { id: '3510',      name: 'Romance' },
   { id: '2501',      name: 'Entrepreneurship' },
-  { id: '2579',      name: 'Leadership' },
   { id: '2558',      name: 'Marketing' },
-  { id: '2533',      name: 'Investing' },
-  { id: '2531',      name: 'Personal Finance' },
+  { id: '2579',      name: 'Leadership' },
+  { id: '4736',      name: 'Self Help' },
   { id: '4507',      name: 'Motivational' },
-  { id: '4734',      name: 'Anxiety & Phobias' },
-  { id: '4744',      name: 'Relationships' },
-  { id: '10',        name: 'Diet & Weight Loss' },
-  { id: '12',        name: 'Mental Health' },
-  { id: '12290',     name: 'Christianity' },
-  { id: '12293',     name: 'Islam' },
-  { id: '12291',     name: 'Spirituality' },
-  { id: '10672',     name: 'Literature & Fiction' },
-  { id: '49',        name: 'Mystery & Thriller' },
-  { id: '48',        name: 'Science Fiction' },
-  { id: '47',        name: 'Fantasy' },
-  { id: '695398',    name: 'Historical Fiction' },
+  { id: '2531',      name: 'Personal Finance' },
+  { id: '486994011', name: 'Biographies' },
   { id: '700200',    name: 'Memoirs' },
-  { id: '28',        name: 'Teen & Young Adult' },
-  { id: '173514',    name: 'Law' },
-  { id: '173513',    name: 'Medical' },
-  { id: '298471',    name: 'Music' },
+  { id: '4744',      name: 'Relationships' },
 ];
 
 // Each category supports up to ~99 pages (~20 books/page = ~1,980 books per category)
@@ -965,21 +938,29 @@ async function findAuthorContact(authorName, bookTitle, saveLog) {
     } catch(e) {}
   }
 
-  // ── STEP 2: Single Google search (1 Bright Data call) ────────────────
+  // ── STEP 2: Guess author website via direct HTTP (FREE — no BD) ──────
+  // Try common domain patterns: firstnamelastname.com, firstname-lastname.com, etc.
   let foundWebsite = null;
-  try {
-    const googleUrl = `https://www.google.com/search?q=${encodeURIComponent('"' + authorName + '" author site')}&num=5`;
-    const html = await scrapeWithBrightData(googleUrl);
-    if (html) {
-      const sites = extractRealWebsites(html);
-      foundWebsite = sites.find(s => {
-        try {
-          const host = new URL(s).hostname.toLowerCase().replace(/^www\./, '');
-          return nameParts.some(p => host.includes(p));
-        } catch { return false; }
-      }) || null;
-    }
-  } catch(e) {}
+  const domainCandidates = [
+    `${firstName}${lastName}.com`,
+    `${nameSlug}.com`,
+    `${firstName}-${lastName}.com`,
+    `${firstName}${lastName}.net`,
+    `${nameSlug}.net`,
+  ];
+  for (const domain of domainCandidates) {
+    try {
+      const r = await axios.get(`https://${domain}`, {
+        timeout: 5000, maxRedirects: 2,
+        headers: { 'User-Agent': 'Mozilla/5.0' },
+        validateStatus: s => s < 400
+      }).catch(() => null);
+      if (r && r.status < 400) {
+        foundWebsite = `https://${domain}`;
+        break;
+      }
+    } catch(e) {}
+  }
 
   if (!foundWebsite) {
     saveLog('info', `⏩ No website for ${authorName}`);
