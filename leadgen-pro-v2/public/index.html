@@ -446,10 +446,19 @@
         loadAmazonLeadsFromJob(latestDone.id);
       }
 
-      container.innerHTML = filtered.map(job => {
+      container.innerHTML = filtered.map(job => renderJobCard(job, framework)).join('');
+
+      // Load content for each expanded card
+      filtered.forEach(job => {
+        const expanded = _minimized[job.id] === true || (job.status === 'running');
+        if (expanded) loadTaskCardContent(job.id, job.framework, framework);
+      });
+    }
+
+    function renderJobCard(job, framework) {
         const isRunning = job.status === 'running';
-        const isDone = job.status === 'complete' || job.status === 'cancelled' || job.status === 'error';
-        const expanded = _minimized[job.id] === true || (!isDone); // running = expanded by default
+        const isDone = job.status === 'complete' || job.status === 'cancelled' || job.status === 'error' || job.status === 'interrupted';
+        const expanded = _minimized[job.id] === true || (!isDone);
         const fw = job.framework === 'amazon' ? '📚 Amazon' : '📡 Intent';
         return `
         <div class="bg-gray-800 border border-gray-700 rounded-lg mb-3" id="task-card-${job.id}" data-framework="${framework}" data-jobid="${job.id}">
@@ -543,13 +552,6 @@
             </div>
           </div>
         </div>`;
-      }).join('');
-
-      // Load content for each expanded card
-      filtered.forEach(job => {
-        const expanded = _minimized[job.id] === true || (job.status === 'running');
-        if (expanded) loadTaskCardContent(job.id, job.framework, framework);
-      });
     }
 
     // _inlineSheet[jobId] = 'high'|'medium'|'website'
@@ -1452,13 +1454,33 @@
         });
         const data = await res.json();
         const jobId = data.jobId;
-        if (!jobId) throw new Error('No job ID returned: ' + JSON.stringify(data));
+        if (!jobId) throw new Error('No task ID returned: ' + JSON.stringify(data));
+
+        // Immediately inject a fake running card so user sees it right away
+        // (real data will replace it on next poll)
+        const container = document.getElementById('jobsList-amazon');
+        const fakeJob = {
+          id: jobId, framework: 'amazon',
+          date_from: dateFrom, date_to: dateTo,
+          target_leads: currentAmazonTarget,
+          status: 'running', is_paused: 0,
+          verified_count: 0, total_count: 0
+        };
         hideScrapeForm('amazon');
+        document.getElementById('amazonBtn').disabled = false;
+        document.getElementById('amazonBtn').textContent = '🚀 Find Authors';
+        // Inject card immediately
+        container.innerHTML = renderJobCard(fakeJob, 'amazon');
+        _minimized[jobId] = true; // expanded by default
         _lastJobsHash = '';
-        // Small delay to let DB write propagate before reloading
-        await new Promise(r => setTimeout(r, 800));
-        await loadJobs('amazon', true); // skipFormShow — task was just created
+
+        // Load content into the card
+        setTimeout(() => loadTaskCardContent(jobId, 'amazon', 'amazon'), 500);
         startPolling(jobId, 'amazon');
+
+        // Full reload after 2s to get real data
+        setTimeout(() => loadJobs('amazon', true), 2000);
+
       } catch (error) {
         console.error('Amazon search error:', error);
         addLog('❌ Error: ' + error.message, 'red', 'amazon');
