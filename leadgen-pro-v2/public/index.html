@@ -371,30 +371,19 @@
           </div>
         </div>
 
-        <!-- Debug Status (visible always) -->
-        <div id="debugStatus-amazon" class="mt-2 text-xs text-yellow-400 font-mono hidden"></div>
-
-        <!-- Progress Bar -->
-        <div id="progressBar-amazon" class="hidden mt-3">
-          <div class="flex justify-between text-xs text-gray-400 mb-1">
-            <span>✅ Verified Leads (new email + real website)</span>
-            <span id="progressText-amazon">0 / 1000</span>
-          </div>
-          <div class="bg-gray-700 rounded-full h-3">
-            <div id="progressFill-amazon" class="bg-green-500 h-3 rounded-full transition-all" style="width: 0%"></div>
-          </div>
-        </div>
+        <!-- progress bar stub (referenced by old polling code) -->
+        <div id="progressBar-amazon" class="hidden"><span id="progressText-amazon"></span><div id="progressFill-amazon"></div></div>
       </div>
 
-      <!-- Amazon AI Console (hidden - logs shown in task card) -->
-      <div id="amazonStatusBar" class="hidden"><div id="amazonSpinner"></div><div id="amazonLogContainer"></div><div id="amazonStatusText"></div><div id="amazon-stat-books"></div><div id="amazon-stat-emails"></div><div id="amazon-stat-websites"></div></div>
-
-      <!-- Amazon table stubs (content now inside task cards) -->
-      <div id="amazonExportBar" class="hidden"><span id="amazon-count-email">0</span><span id="amazon-count-total">0</span></div>
-      <div id="sheet-tab-high" class="hidden"></div><div id="sheet-tab-medium" class="hidden"></div><div id="sheet-tab-website" class="hidden"></div>
-      <span id="sheet-count-high" class="hidden">0</span><span id="sheet-count-medium" class="hidden">0</span><span id="sheet-count-website" class="hidden">0</span>
-      <div class="hidden"><input id="amazonSearch"><select id="amazonSort"></select></div>
-      <div class="hidden"><tbody id="amazonResultsTable"></tbody></div>
+      <!-- Stubs for legacy JS refs (kept hidden, never shown) -->
+      <div class="hidden" aria-hidden="true">
+        <div id="amazonStatusBar"><div id="amazonSpinner"></div><div id="amazonLogContainer"></div><div id="amazonStatusText"></div><div id="amazon-stat-books"></div><div id="amazon-stat-emails"></div><div id="amazon-stat-websites"></div></div>
+        <div id="amazonExportBar"><span id="amazon-count-email">0</span><span id="amazon-count-total">0</span></div>
+        <div id="sheet-tab-high"></div><div id="sheet-tab-medium"></div><div id="sheet-tab-website"></div>
+        <span id="sheet-count-high">0</span><span id="sheet-count-medium">0</span><span id="sheet-count-website">0</span>
+        <input id="amazonSearch"><select id="amazonSort"></select>
+        <tbody id="amazonResultsTable"></tbody>
+      </div>
           </div><!-- end #content-amazon -->
 
   </div>
@@ -1450,78 +1439,35 @@
       }
     }
 
-    function dbg(msg, color = '#facc15') {
-      const el = document.getElementById('debugStatus-amazon');
-      if (!el) return;
-      el.classList.remove('hidden');
-      el.innerHTML += `<div style="color:${color}">[${new Date().toLocaleTimeString()}] ${msg}</div>`;
-    }
-
     async function startAmazonSearch() {
-      const dbgEl = document.getElementById('debugStatus-amazon');
-      if (dbgEl) { dbgEl.innerHTML = ''; dbgEl.classList.remove('hidden'); }
-
       const dateFrom = document.getElementById('dateFrom-amazon').value;
       const dateTo = document.getElementById('dateTo-amazon').value;
       currentAmazonTarget = parseInt(document.getElementById('targetLeads-amazon').value);
 
-      dbg(`▶ Button clicked — dateFrom="${dateFrom}" dateTo="${dateTo}" target=${currentAmazonTarget}`);
-
-      if (!dateFrom || !dateTo) { 
-        dbg('❌ STOPPED: date fields are empty!', '#f87171');
-        alert('⚠️ Please select a date range!\n\nChoose a "From" and "To" date above the button, then try again.');
-        return; 
-      }
-
-      // Reset — all wrapped in try/catch so any null-deref is visible
-      try {
-        amazonLeads = [];
-        amazonStats = { books: 0, emails: 0, websites: 0 };
-        const resultsTable = document.getElementById('amazonResultsTable');
-        if (resultsTable) resultsTable.innerHTML = '';
-        const statusBar = document.getElementById('amazonStatusBar');
-        if (statusBar) statusBar.classList.remove('hidden');
-        const exportBar = document.getElementById('amazonExportBar');
-        if (exportBar) exportBar.classList.add('hidden');
-        const logContainer = document.getElementById('amazonLogContainer');
-        if (logContainer) logContainer.innerHTML = '<div class="text-purple-400">🚀 Starting Amazon Author Lead Gen...</div>';
-        document.getElementById('amazonBtn').disabled = true;
-        document.getElementById('amazonBtn').textContent = '⏳ Searching...';
-        const spinner = document.getElementById('amazonSpinner');
-        if (spinner) spinner.classList.remove('hidden');
-
-        // Show & reset progress bar
-        const pBar = document.getElementById('progressBar-amazon');
-        if (pBar) pBar.classList.remove('hidden');
-        const progressText = document.getElementById('progressText-amazon');
-        if (progressText) progressText.textContent = `0 / ${currentAmazonTarget}`;
-        const progressFill = document.getElementById('progressFill-amazon');
-        if (progressFill) progressFill.style.width = '0%';
-        dbg('✅ UI reset done — calling API...', '#4ade80');
-        updateAmazonStats();
-      } catch(uiErr) {
-        dbg(`❌ UI reset crashed: ${uiErr.message}`, '#f87171');
-        document.getElementById('amazonBtn').disabled = false;
-        document.getElementById('amazonBtn').textContent = '🚀 Find Authors';
+      if (!dateFrom || !dateTo) {
+        alert('⚠️ Please select a date range first.');
         return;
       }
 
+      document.getElementById('amazonBtn').disabled = true;
+      document.getElementById('amazonBtn').textContent = '⏳ Starting...';
+
       try {
-        dbg('📡 Sending POST /api/amazon...');
         const res = await fetch('/api/amazon', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ dateFrom, dateTo, targetLeads: currentAmazonTarget })
         });
-        dbg(`📥 Response status: ${res.status}`);
-        if (!res.ok) throw new Error(`Server error ${res.status}: ${await res.text()}`);
+        if (!res.ok) throw new Error(`Server error ${res.status}`);
         const data = await res.json();
-        dbg(`✅ Got jobId: ${data.jobId}`, '#4ade80');
         const jobId = data.jobId;
-        if (!jobId) throw new Error('No task ID returned: ' + JSON.stringify(data));
+        if (!jobId) throw new Error('No task ID returned');
 
-        // Immediately inject a fake running card so user sees it right away
-        // (real data will replace it on next poll)
+        hideScrapeForm('amazon');
+        document.getElementById('amazonBtn').disabled = false;
+        document.getElementById('amazonBtn').textContent = '🚀 Find Authors';
+
+        // Inject task card immediately
         const container = document.getElementById('jobsList-amazon');
         const fakeJob = {
           id: jobId, framework: 'amazon',
@@ -1530,28 +1476,17 @@
           status: 'running', is_paused: 0,
           verified_count: 0, total_count: 0
         };
-        hideScrapeForm('amazon');
-        document.getElementById('amazonBtn').disabled = false;
-        document.getElementById('amazonBtn').textContent = '🚀 Find Authors';
-        // Inject card immediately
         container.innerHTML = renderJobCard(fakeJob, 'amazon');
-        _minimized[jobId] = true; // expanded by default
+        _minimized[jobId] = true;
         _lastJobsHash = '';
 
-        dbg(`🃏 Task card injected — loading content...`, '#4ade80');
-
-        // Load content into the card
         setTimeout(() => loadTaskCardContent(jobId, 'amazon', 'amazon'), 500);
         startPolling(jobId, 'amazon');
-
-        // Full reload after 2s to get real data
         setTimeout(() => loadJobs('amazon', true), 2000);
 
       } catch (error) {
         console.error('Amazon search error:', error);
-        addLog('❌ Error: ' + error.message, 'red', 'amazon');
-        dbg(`❌ ERROR: ${error.message}`, '#f87171');
-        alert('❌ Failed to start search: ' + error.message + '\n\nThe server may be waking up (Render free tier). Wait 30 seconds and try again.');
+        alert('❌ Failed to start: ' + error.message + '\n\nServer may be waking up — wait 30s and try again.');
         document.getElementById('amazonBtn').disabled = false;
         document.getElementById('amazonBtn').textContent = '🚀 Find Authors';
       }
