@@ -147,6 +147,57 @@ if (DATABASE_URL) {
   console.log('✅ Using Neon PostgreSQL');
   module.exports = db;
 
+} else if (process.env.TURSO_URL && process.env.TURSO_TOKEN) {
+  // ── TURSO (LibSQL — persistent cloud SQLite) ─────────────────────────
+  const { createClient } = require('@libsql/client');
+  const turso = createClient({
+    url: process.env.TURSO_URL,
+    authToken: process.env.TURSO_TOKEN,
+  });
+
+  async function initTurso() {
+    const stmts = SCHEMA_SQLITE.split(';').map(s => s.trim()).filter(s => s.length > 10);
+    for (const stmt of stmts) {
+      await turso.execute(stmt).catch(e => {
+        if (!e.message.includes('already exists')) console.warn('Turso schema warning:', e.message);
+      });
+    }
+    console.log('✅ Turso schema ready');
+  }
+
+  const db = {
+    _pg: false,
+    _turso: true,
+    init: initTurso,
+
+    prepare(sql) {
+      return {
+        async get(...args) {
+          const r = await turso.execute({ sql, args });
+          return r.rows[0] ? Object.fromEntries(r.columns.map((c, i) => [c, r.rows[0][i]])) : undefined;
+        },
+        async all(...args) {
+          const r = await turso.execute({ sql, args });
+          return r.rows.map(row => Object.fromEntries(r.columns.map((c, i) => [c, row[i]])));
+        },
+        async run(...args) {
+          const r = await turso.execute({ sql, args });
+          return { lastInsertRowid: r.lastInsertRowid, changes: r.rowsAffected };
+        },
+      };
+    },
+
+    async exec(sql) {
+      const stmts = sql.split(';').map(s => s.trim()).filter(s => s.length > 5);
+      for (const s of stmts) {
+        await turso.execute(s).catch(() => {});
+      }
+    },
+  };
+
+  console.log('✅ Using Turso LibSQL (persistent cloud)');
+  module.exports = db;
+
 } else {
   // ── LOCAL FALLBACK (node-sqlite3-wasm) ──────────────────────────────
   const SCHEMA_SQLITE = `
