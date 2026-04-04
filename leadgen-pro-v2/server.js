@@ -734,8 +734,9 @@ function buildAmazonUrl(dateFrom, dateTo, page = 1) { return null; } // legacy s
 function getAmazonUrl(urlIndex, page) {
   const cat = AMAZON_CATEGORY_NODES[urlIndex % AMAZON_CATEGORY_NODES.length];
   const pg = Math.max(1, Math.min(page, MAX_PAGES_PER_URL));
-  // Sort by newest first so we get fresh books
-  return `https://www.amazon.com/s?i=stripbooks&rh=n%3A${cat.id}&page=${pg}&s=date-desc-rank`;
+  // Filter to paperback only (p_n_feature_browse-bin:2656022011)
+  // Paperback listings include publisher info in the card — ebook-only authors are naturally excluded
+  return `https://www.amazon.com/s?i=stripbooks&rh=n%3A${cat.id}%2Cp_n_feature_browse-bin%3A2656022011&page=${pg}&s=date-desc-rank`;
 }
 
 // Parse Amazon search results HTML (Web Unlocker) into book objects
@@ -777,11 +778,17 @@ function parseAmazonNewReleasesHtml(html) {
     const dateM = after.match(/a-color-secondary a-text-normal">([^<]{4,30})<\/span>/);
     const publishDate = dateM ? decodeEntities(dateM[1]) : '';
 
-    // Publisher — appears after date in "Publisher : NAME" or "by NAME" patterns
-    const publisherM = after.match(/Publisher\s*[:\-]\s*<[^>]+>([^<]{2,80})<\//) ||
-                       after.match(/Publisher\s*[:\-]\s*([A-Za-z][^<\n]{2,60})/) ||
-                       after.match(/class="[^"]*publisher[^"]*"[^>]*>([^<]{2,80})<\//i);
-    const publisher = publisherM ? decodeEntities(publisherM[1].trim()) : '';
+    // Publisher — paperback listings show it in several patterns
+    // Pattern 1: "Publisher : <a>NAME</a>" or "Publisher : NAME"
+    // Pattern 2: after date row "by ... | Publisher name" in a-row
+    // Pattern 3: a-color-secondary containing publisher after date
+    const publisherM =
+      after.match(/[Pp]ublisher\s*[:\–\-]\s*<[^>]+>([^<]{2,80})<\//) ||
+      after.match(/[Pp]ublisher\s*[:\–\-]\s*([A-Za-z][^\n<]{2,60})/) ||
+      after.match(/class="[^"]*publisher[^"]*"[^>]*>([^<]{2,80})<\//i) ||
+      after.match(/a-color-secondary[^>]*>\s*([A-Z][a-zA-Z\s&,\.]{3,50})\s*<\/span>\s*<\/div>\s*<div[^>]*>.*?(?:Paperback|Hardcover)/s) ||
+      after.match(/(?:Paperback|Hardcover)[^<]*<[^>]+>[^<]*<\/[^>]+>\s*(?:<[^>]+>)*([A-Z][a-zA-Z0-9\s&,\.\-]{3,50})<\/[a-z]+>\s*<\/div>/);
+    const publisher = publisherM ? decodeEntities(publisherM[1].trim()).replace(/\s+/g,' ').substring(0,60) : '';
 
     // Review count — aria-label="X ratings" or popoverLabel "X out of 5 stars"
     const fullArea = before.substring(before.length - 500) + after;

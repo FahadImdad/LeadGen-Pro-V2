@@ -746,7 +746,7 @@
           <th class="px-2 py-1.5 text-left text-gray-400 font-semibold">#</th>
           <th class="px-2 py-1.5 text-left text-gray-400 font-semibold">Author</th>
           <th class="px-2 py-1.5 text-left text-gray-400 font-semibold">Book</th>
-
+          <th class="px-2 py-1.5 text-left text-gray-400 font-semibold">Publisher</th>
           <th class="px-2 py-1.5 text-left text-gray-400 font-semibold">📅</th>
           <th class="px-2 py-1.5 text-left text-gray-400 font-semibold">⭐</th>
           <th class="px-2 py-1.5 text-left text-gray-400 font-semibold">${isWebsiteTab ? 'Website' : 'Email'}</th>
@@ -756,7 +756,6 @@
           const reviewBadge = (l.review_count > 0)
             ? `<span class="text-yellow-400">${l.review_count}</span>`
             : `<span class="text-gray-600">0</span>`;
-          // Color by confidence: high=green, medium=orange, low/accept_all=yellow
           const emailColor = l.email_status === 'valid' ? 'text-green-400'
             : l.email_confidence === 'high' ? 'text-green-300'
             : l.email_confidence === 'medium' ? 'text-orange-400'
@@ -776,12 +775,13 @@
             l.amazon_url ? `<a href="${escapeHtml(l.amazon_url)}" target="_blank" rel="noopener noreferrer" class="text-orange-400 hover:text-orange-300" title="Amazon">📚</a>` : ''
           ].filter(Boolean).join(' ');
           const pubDate = l.publish_date ? l.publish_date.substring(0,10) : '—';
+          const publisherCell = l.publisher ? `<span class="text-gray-400 text-xs truncate max-w-20 block" title="${escapeHtml(l.publisher)}">${escapeHtml(l.publisher.substring(0,20))}${l.publisher.length>20?'…':''}</span>` : '<span class="text-gray-600 text-xs">—</span>';
 
           return `<tr class="${i%2===0?'bg-gray-800':'bg-gray-850'} border-t border-gray-700/50 hover:bg-gray-700">
             <td class="px-2 py-1.5 text-gray-500">${i+1}</td>
             <td class="px-2 py-1.5 text-white font-medium"><div class="truncate max-w-24" title="${escapeHtml(l.author||'')}">${escapeHtml(l.author||'')}</div></td>
             <td class="px-2 py-1.5 text-gray-300"><div class="truncate max-w-36" title="${escapeHtml(l.book_title||'')}">${escapeHtml((l.book_title||'').substring(0,45))}${(l.book_title||'').length>45?'…':''}</div></td>
-
+            <td class="px-2 py-1.5">${publisherCell}</td>
             <td class="px-2 py-1.5 text-gray-400 whitespace-nowrap text-xs">${pubDate}</td>
             <td class="px-2 py-1.5 text-center">${reviewBadge}</td>
             <td class="px-2 py-1.5">${contactCell}</td>
