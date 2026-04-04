@@ -1010,11 +1010,17 @@ async function findAuthorContact(authorName, bookTitle, saveLog, jobId = null) {
     ).catch(() => null);
     const email = r?.data?.data?.email;
     const score = r?.data?.data?.score || 0;
+    const errors = r?.data?.errors;
+    if (errors?.length) saveLog('warning', `⚠️ Hunter error: ${errors[0]?.details || errors[0]?.id}`);
     if (email && score >= 30) {
       saveLog('success', `📧 Hunter: ${email} (${score}%)`);
       return { email, website: foundWebsite };
+    } else if (email) {
+      saveLog('info', `⏩ Hunter found ${email} but score too low (${score}%)`);
+    } else {
+      saveLog('info', `⏩ Hunter: no email for ${domain}`);
     }
-  } catch(e) {}
+  } catch(e) { saveLog('warning', `⚠️ Hunter exception: ${e.message}`); }
 
   // ── STEP 4: Scrape author website for email (1 Bright Data call) ──────
   try {
@@ -1023,13 +1029,15 @@ async function findAuthorContact(authorName, bookTitle, saveLog, jobId = null) {
       saveLog('success', `📧 Scraped: ${result.email}`);
       return { email: result.email, website: foundWebsite };
     }
+    saveLog('info', `⏩ No email on homepage — trying /contact`);
     // Try /contact page only if homepage had no email
     const contactResult = await fetchEmails(foundWebsite.replace(/\/$/, '') + '/contact');
     if (contactResult.email) {
       saveLog('success', `📧 Contact: ${contactResult.email}`);
       return { email: contactResult.email, website: foundWebsite };
     }
-  } catch(e) {}
+    saveLog('info', `⏩ No email found for ${authorName} (website-only)`);
+  } catch(e) { saveLog('warning', `⚠️ Scrape exception: ${e.message}`); }
 
   return { email: null, website: foundWebsite };
 }
