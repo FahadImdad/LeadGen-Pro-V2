@@ -1177,7 +1177,7 @@ app.get('/api/health', async (req, res) => {
 // GET /api/stats — dashboard summary
 app.get('/api/stats', async (req, res) => {
   try {
-    const vRow = await db.prepare('SELECT COUNT(*) as cnt FROM amazon_leads WHERE email_verified=1 AND is_duplicate=0').get();
+    const vRow = await db.prepare("SELECT COUNT(*) as cnt FROM amazon_leads WHERE email_verified=1 AND email_confidence='high' AND is_duplicate=0").get();
     const wRow = await db.prepare('SELECT COUNT(*) as cnt FROM amazon_leads WHERE website IS NOT NULL AND is_duplicate=0').get();
     const jRow = await db.prepare("SELECT COUNT(*) as cnt FROM scrape_jobs WHERE framework='amazon'").get();
     const verified = Number(vRow?.cnt || vRow?.c || 0);
@@ -1242,7 +1242,7 @@ async function runAmazonJob(jobId, dateFrom, dateTo, targetLeads, keyword) {
     // Resume from existing counts + position (in case of server restart)
     const existingCounts = await db.prepare('SELECT verified_count, total_count, resume_url_index, resume_page FROM scrape_jobs WHERE id=?').get(jobId);
     // Always read actual counts from DB rows — job counter can drift on restart
-    const actualVerified = await db.prepare('SELECT COUNT(*) as cnt FROM amazon_leads WHERE job_id=? AND email_verified=1 AND is_duplicate=0').get(jobId);
+    const actualVerified = await db.prepare("SELECT COUNT(*) as cnt FROM amazon_leads WHERE job_id=? AND email_verified=1 AND email_confidence='high' AND is_duplicate=0").get(jobId);
     const actualTotal = await db.prepare('SELECT COUNT(*) as cnt FROM amazon_leads WHERE job_id=?').get(jobId);
     let verifiedCount = Number(actualVerified?.cnt || actualVerified?.c || existingCounts?.verified_count || 0);
     let totalCount = Number(actualTotal?.cnt || actualTotal?.c || existingCounts?.total_count || 0);
@@ -1561,11 +1561,14 @@ async function runAmazonJob(jobId, dateFrom, dateTo, targetLeads, keyword) {
               return;
             }
 
-            if (emailVerified) {
-              // Verified unique email — counts toward target
+            if (emailVerified && emailConfidence === 'high') {
+              // HIGH confidence only counts toward target
               verifiedCount++;
               await db.prepare('UPDATE scrape_jobs SET verified_count = ?, total_count = ? WHERE id = ?').run(verifiedCount, totalCount, jobId);
               await saveLog(jobId, 'success', `✅ VERIFIED #${verifiedCount}: ${author} | ${email}`);
+            } else if (emailVerified && emailConfidence === 'medium') {
+              // Medium saved but doesn't count toward target
+              await db.prepare('UPDATE scrape_jobs SET total_count = ? WHERE id = ?').run(totalCount, jobId);
             } else if (!email && hasRealWebsite) {
               // Website-only lead — useful but not counted toward target
               await db.prepare('UPDATE scrape_jobs SET total_count = ? WHERE id = ?').run(totalCount, jobId);
