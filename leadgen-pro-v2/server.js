@@ -1422,7 +1422,7 @@ async function runAmazonJob(jobId, dateFrom, dateTo, targetLeads, keyword) {
               return;
             }
 
-            // Detect language (tag only — don't skip)
+            // English-only filter — skip any non-English book
             const nonEnglishPatterns = [
               /\(French Edition\)/i, /\(Spanish Edition\)/i, /\(German Edition\)/i,
               /\(Portuguese Edition\)/i, /\(Italian Edition\)/i, /\(Dutch Edition\)/i,
@@ -1432,9 +1432,13 @@ async function runAmazonJob(jobId, dateFrom, dateTo, targetLeads, keyword) {
               / Edición /i, / édition /i, / Ausgabe /i, /\bEdição\b/i,
               /\bEdizione\b/i, /\bUitgave\b/i,
             ];
-            const isNonEnglish = nonEnglishPatterns.some(p => p.test(title));
+            const hasNonEnglishTag = nonEnglishPatterns.some(p => p.test(title));
+            // Also detect non-ASCII characters in title (Japanese, Chinese, Arabic, Cyrillic etc)
+            const hasNonAsciiChars = /[^\x00-\x7F]/.test(title) && !/[àáâãäåæçèéêëìíîïðñòóôõöùúûüýþÿ]/i.test(title);
+            // Allow common accented Latin chars (English/Irish names) but block CJK, Arabic, Cyrillic
+            const hasCJKOrArabic = /[\u0600-\u06FF\u0750-\u077F\u4E00-\u9FFF\u3040-\u30FF\uAC00-\uD7AF\u0400-\u04FF]/.test(title);
+            const isNonEnglish = hasNonEnglishTag || hasCJKOrArabic;
 
-            // Skip non-English books — Suleman's services are English market only
             if (isNonEnglish) {
               await saveLog(jobId, 'info', `⏭️ SKIP (non-English): ${title.substring(0, 60)}`);
               return;
