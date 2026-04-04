@@ -1065,18 +1065,19 @@ async function findAuthorContact(authorName, bookTitle, saveLog, jobId = null) {
 
   saveLog('info', `🌐 ${foundWebsite}`);
 
-  // ── STEP 3: Smart page scraping — direct HTTP first (free), BD only as fallback ──
+  // ── STEP 3: Parallel scrape homepage + /contact simultaneously ──
+  // Both fire at same time → 2x faster, same BD cost
   const base = foundWebsite.replace(/\/$/, '');
 
-  // Try homepage first
-  const homeResult = await fetchEmails(base);
+  const [homeResult, contactResult] = await Promise.all([
+    fetchEmails(base),
+    fetchEmails(`${base}/contact`)
+  ]);
+
   if (homeResult.email) {
     saveLog('success', `📧 Found on homepage: ${homeResult.email}`);
     return { email: homeResult.email, website: foundWebsite };
   }
-
-  // Only try /contact if homepage had no email (skip /about — rarely has email)
-  const contactResult = await fetchEmails(`${base}/contact`);
   if (contactResult.email) {
     saveLog('success', `📧 Found on /contact: ${contactResult.email}`);
     return { email: contactResult.email, website: foundWebsite };
@@ -1324,6 +1325,7 @@ async function runAmazonJob(jobId, dateFrom, dateTo, targetLeads, keyword) {
       let consecutiveEmpty = 0;
       let urlIndex = existingCounts?.resume_url_index || 0;
       const seenAsinsThisRun = new Set();
+      const seenDomainsThisRun = new Set(); // skip duplicate domains (same author, multiple books)
       let cycleStartCount = verifiedCount; // track leads per full cycle to detect exhaustion
       if (resuming) await saveLog(jobId, 'info', `📍 Resuming from category ${urlIndex + 1}/${AMAZON_CATEGORY_NODES.length}, page ${page_num}`);
       await saveLog(jobId, 'info', `📚 Total categories: ${AMAZON_CATEGORY_NODES.length} × ${MAX_PAGES_PER_URL} pages = ${AMAZON_CATEGORY_NODES.length * MAX_PAGES_PER_URL * 50} max books`);
@@ -1544,8 +1546,22 @@ async function runAmazonJob(jobId, dateFrom, dateTo, targetLeads, keyword) {
             // Find author contact
             const { email, website } = await findAuthorContact(author, title, async (level, msg) => await saveLog(jobId, level, msg), jobId);
 
-            // Option B — scrape book detail page for publisher + accurate date (only if author has website)
-            if (website && (!book.publisher || !book.publishDate)) {
+            // Domain dedup — skip if same domain already scraped this run
+            if (website) {
+              try {
+                const domain = new URL(website).hostname.replace(/^www\./, '');
+                if (seenDomainsThisRun.has(domain)) {
+                  await saveLog(jobId, 'info', `⏭️ SKIP (domain already scraped): ${domain}`);
+                  return;
+                }
+                seenDomainsThisRun.add(domain);
+              } catch(e) {}
+            }
+
+            // Option B — scrape book detail page for publisher + accurate date
+            // Skip for Kindle — no publisher field, saves BD call
+            const isKindle = book.bookFormat === 'Kindle';
+            if (website && !isKindle && (!book.publisher || !book.publishDate)) {
               try {
                 const detailHtml = await scrapeWithBrightData(`https://www.amazon.com/dp/${asin}`, jobId);
                 if (detailHtml) {
