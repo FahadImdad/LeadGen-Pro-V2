@@ -716,17 +716,44 @@ function isLikelyAuthorEmail(email, authorName) {
 // Amazon category node IDs — each supports 400 pages of search results (~16,000 books per category)
 // URL format: https://www.amazon.com/s?i=stripbooks&rh=n:NODE_ID&page=N&s=date-desc-rank
 const AMAZON_CATEGORY_NODES = [
-  // Top categories — highest author website / email rate (business/self-help authors maintain personal sites)
   { id: '2635',      name: 'Business & Money' },
-  { id: '2501',      name: 'Entrepreneurship' },
-  { id: '2558',      name: 'Marketing' },
-  { id: '2579',      name: 'Leadership' },
   { id: '4736',      name: 'Self Help' },
-  { id: '4507',      name: 'Motivational' },
-  { id: '2531',      name: 'Personal Finance' },
+  { id: '6',         name: 'Health & Fitness' },
   { id: '486994011', name: 'Biographies' },
-  { id: '700200',    name: 'Memoirs' },
+  { id: '22',        name: 'Religion & Spirituality' },
+  { id: '4919',      name: 'Parenting' },
+  { id: '75',        name: 'Science & Math' },
+  { id: '9',         name: 'History' },
+  { id: '11232',     name: 'Politics & Social' },
+  { id: '2642',      name: 'Travel' },
+  { id: '4677',      name: 'Education' },
+  { id: '3',         name: 'Children' },
+  { id: '4',         name: 'Computers & Tech' },
+  { id: '173507',    name: 'Arts & Photography' },
+  { id: '3510',      name: 'Romance' },
+  { id: '2501',      name: 'Entrepreneurship' },
+  { id: '2579',      name: 'Leadership' },
+  { id: '2558',      name: 'Marketing' },
+  { id: '2533',      name: 'Investing' },
+  { id: '2531',      name: 'Personal Finance' },
+  { id: '4507',      name: 'Motivational' },
+  { id: '4734',      name: 'Anxiety & Phobias' },
   { id: '4744',      name: 'Relationships' },
+  { id: '10',        name: 'Diet & Weight Loss' },
+  { id: '12',        name: 'Mental Health' },
+  { id: '12290',     name: 'Christianity' },
+  { id: '12293',     name: 'Islam' },
+  { id: '12291',     name: 'Spirituality' },
+  { id: '10672',     name: 'Literature & Fiction' },
+  { id: '49',        name: 'Mystery & Thriller' },
+  { id: '48',        name: 'Science Fiction' },
+  { id: '47',        name: 'Fantasy' },
+  { id: '695398',    name: 'Historical Fiction' },
+  { id: '700200',    name: 'Memoirs' },
+  { id: '28',        name: 'Teen & Young Adult' },
+  { id: '173514',    name: 'Law' },
+  { id: '173513',    name: 'Medical' },
+  { id: '298471',    name: 'Music' },
 ];
 
 // Each category supports up to ~99 pages (~20 books/page = ~1,980 books per category)
@@ -1001,44 +1028,28 @@ async function findAuthorContact(authorName, bookTitle, saveLog, jobId = null) {
 
   saveLog('info', `🌐 ${foundWebsite}`);
 
-  // ── STEP 3: Hunter on found domain (FREE — no Bright Data) ───────────
-  try {
-    const domain = new URL(foundWebsite).hostname.replace(/^www\./, '');
-    const r = await axios.get(
-      `https://api.hunter.io/v2/email-finder?domain=${encodeURIComponent(domain)}&first_name=${encodeURIComponent(firstName)}&last_name=${encodeURIComponent(lastName)}&api_key=${HUNTER_API_KEY}`,
-      { timeout: 8000 }
-    ).catch(() => null);
-    const email = r?.data?.data?.email;
-    const score = r?.data?.data?.score || 0;
-    const errors = r?.data?.errors;
-    if (errors?.length) saveLog('warning', `⚠️ Hunter error: ${errors[0]?.details || errors[0]?.id}`);
-    if (email && score >= 30) {
-      saveLog('success', `📧 Hunter: ${email} (${score}%)`);
-      return { email, website: foundWebsite };
-    } else if (email) {
-      saveLog('info', `⏩ Hunter found ${email} but score too low (${score}%)`);
-    } else {
-      saveLog('info', `⏩ Hunter: no email for ${domain}`);
-    }
-  } catch(e) { saveLog('warning', `⚠️ Hunter exception: ${e.message}`); }
+  // ── STEP 3: Scrape multiple pages for email (BD only — no Hunter) ──────
+  // Try homepage + /contact + /about + /hire + /speaking in order
+  const base = foundWebsite.replace(/\/$/, '');
+  // Max 3 BD calls per author: homepage → /contact → /about
+  const pagesToTry = [
+    base,
+    `${base}/contact`,
+    `${base}/about`,
+  ];
 
-  // ── STEP 4: Scrape author website for email (1 Bright Data call) ──────
-  try {
-    const result = await fetchEmails(foundWebsite);
-    if (result.email) {
-      saveLog('success', `📧 Scraped: ${result.email}`);
-      return { email: result.email, website: foundWebsite };
-    }
-    saveLog('info', `⏩ No email on homepage — trying /contact`);
-    // Try /contact page only if homepage had no email
-    const contactResult = await fetchEmails(foundWebsite.replace(/\/$/, '') + '/contact');
-    if (contactResult.email) {
-      saveLog('success', `📧 Contact: ${contactResult.email}`);
-      return { email: contactResult.email, website: foundWebsite };
-    }
-    saveLog('info', `⏩ No email found for ${authorName} (website-only)`);
-  } catch(e) { saveLog('warning', `⚠️ Scrape exception: ${e.message}`); }
+  for (const pageUrl of pagesToTry) {
+    try {
+      const result = await fetchEmails(pageUrl);
+      if (result.email) {
+        const pageName = pageUrl.replace(base, '') || '/';
+        saveLog('success', `📧 Found on ${pageName}: ${result.email}`);
+        return { email: result.email, website: foundWebsite };
+      }
+    } catch(e) {}
+  }
 
+  saveLog('info', `⏩ No email found for ${authorName} (website-only)`);
   return { email: null, website: foundWebsite };
 }
 
