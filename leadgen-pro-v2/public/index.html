@@ -451,13 +451,37 @@
         loadAmazonLeadsFromJob(latestDone.id);
       }
 
-      container.innerHTML = filtered.map(job => renderJobCard(job, framework)).join('');
-
-      // Load content for each expanded card
+      // Only re-render cards whose status changed — avoid resetting lead counts on every poll
       filtered.forEach(job => {
-        const expanded = _minimized[job.id] === true || (job.status === 'running');
-        if (expanded) loadTaskCardContent(job.id, job.framework, framework);
+        const existing = document.getElementById(`task-card-${job.id}`);
+        if (!existing) {
+          // New card — inject it
+          container.insertAdjacentHTML('beforeend', renderJobCard(job, framework));
+          const expanded = _minimized[job.id] === true || (job.status === 'running');
+          if (expanded) loadTaskCardContent(job.id, job.framework, framework);
+        } else {
+          // Card exists — only reload content if status changed (running→complete etc)
+          const prevStatus = existing.dataset.status;
+          if (prevStatus !== job.status) {
+            existing.outerHTML = renderJobCard(job, framework);
+            const expanded = _minimized[job.id] === true || (job.status === 'running');
+            if (expanded) loadTaskCardContent(job.id, job.framework, framework);
+          }
+          // Always tag with current status for next check
+          const card = document.getElementById(`task-card-${job.id}`);
+          if (card) card.dataset.status = job.status;
+        }
       });
+      // Remove cards for deleted jobs
+      container.querySelectorAll('[id^="task-card-"]').forEach(el => {
+        const id = parseInt(el.id.replace('task-card-',''));
+        if (!filtered.find(j => j.id === id)) el.remove();
+      });
+      // If container is empty after removals
+      if (!container.querySelector('[id^="task-card-"]')) {
+        container.innerHTML = '<div class="text-gray-500 text-sm">No previous tasks.</div>';
+        if (!skipFormShow) showScrapeForm(framework);
+      }
     }
 
     function renderJobCard(job, framework) {
@@ -466,7 +490,7 @@
         const expanded = _minimized[job.id] === true || (!isDone);
         const fw = job.framework === 'amazon' ? '📚 Amazon' : '📡 Intent';
         return `
-        <div class="bg-gray-800 border border-gray-700 rounded-lg mb-3" id="task-card-${job.id}" data-framework="${framework}" data-jobid="${job.id}">
+        <div class="bg-gray-800 border border-gray-700 rounded-lg mb-3" id="task-card-${job.id}" data-framework="${framework}" data-jobid="${job.id}" data-status="${job.status}">
           <!-- Task Header (always visible) -->
           <div class="flex items-start gap-2 px-3 py-2 cursor-pointer" onclick="toggleTask(${job.id},'${framework}')">
             <div class="flex-1 min-w-0">
