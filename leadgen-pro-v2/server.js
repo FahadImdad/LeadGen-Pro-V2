@@ -1646,26 +1646,25 @@ async function runAmazonJob(jobId, dateFrom, dateTo, targetLeads, keyword) {
               }
             }
 
-            // Fetch Amazon detail page for publisher + accurate date
-            // Done HERE (after all filters) so we only pay for leads we actually save
-            const isKindle = book.bookFormat === 'Kindle';
-            if (!isKindle) {
+            // Fetch publisher + date from Google Books API (FREE, no key needed)
+            // Much cheaper than Browser API — no Bright Data cost at all
+            if (!book.publisher || !book.publishDate) {
               try {
-                const detailHtml = await scrapeWithBrowser(`https://www.amazon.com/dp/${asin}`);
-                if (detailHtml && detailHtml.length > 10000) {
-                  const pubSection = detailHtml.match(/book_details-publisher[\s\S]{0,800}?rpi-attribute-value[\s\S]{0,200}?<span[^>]*>\s*([^<]{2,80}?)\s*<\/span>/);
-                  if (pubSection) {
-                    book.publisher = pubSection[1].trim().replace(/\s+/g,' ').substring(0,60);
+                const gbUrl = `https://www.googleapis.com/books/v1/volumes?q=isbn:${asin}+intitle:${encodeURIComponent(title.substring(0,40))}&maxResults=1`;
+                const gbRes = await axios.get(gbUrl, { timeout: 8000 });
+                const volInfo = gbRes.data.items?.[0]?.volumeInfo;
+                if (volInfo) {
+                  if (!book.publisher && volInfo.publisher) {
+                    book.publisher = volInfo.publisher.substring(0, 60);
                     await saveLog(jobId, 'info', `🏢 Publisher: ${book.publisher}`);
                   }
-                  const dateSection = detailHtml.match(/book_details-publication_date[\s\S]{0,800}?rpi-attribute-value[\s\S]{0,200}?<span[^>]*>\s*([^<]{4,30}?)\s*<\/span>/);
-                  if (dateSection) {
-                    book.publishDate = dateSection[1].trim();
+                  if (!book.publishDate && volInfo.publishedDate) {
+                    book.publishDate = volInfo.publishedDate;
                     await saveLog(jobId, 'info', `📅 Date: ${book.publishDate}`);
                   }
                 }
               } catch(e) {
-                await saveLog(jobId, 'warning', `⚠️ Detail page error for ${asin}: ${e.message}`);
+                // Google Books unavailable — not critical, continue without
               }
             }
 
