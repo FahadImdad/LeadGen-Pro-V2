@@ -213,20 +213,16 @@ async function verifyEmail(email) {
     } catch(e) { return { valid: null, status: 'error' }; }
   }
 
-  // Step 1: Check the actual email
-  const realResult = await smtpCheck(email);
-  if (!realResult.valid) return { valid: false, status: realResult.status };
-  if (realResult.valid === null) return { valid: true, status: 'accept_all' }; // can't connect, assume valid
-
-  // Step 2: Catch-all detection — test a random fake email on same domain
+  // Fire real + fake check simultaneously (catch-all detection in parallel)
   const fakeEmail = `xyznonexistent_${Date.now()}@${domain}`;
-  const fakeResult = await smtpCheck(fakeEmail);
-  if (fakeResult.valid === true) {
-    // Server accepts everything — catch-all, save as medium confidence
-    return { valid: true, status: 'catch_all' };
-  }
+  const [realResult, fakeResult] = await Promise.all([
+    smtpCheck(email),
+    smtpCheck(fakeEmail)
+  ]);
 
-  // Real email accepted, fake rejected = inbox confirmed ✅
+  if (realResult.valid === null) return { valid: true, status: 'accept_all' }; // can't connect
+  if (!realResult.valid) return { valid: false, status: realResult.status };
+  if (fakeResult.valid === true) return { valid: true, status: 'catch_all' };
   return { valid: true, status: 'verified' };
 }
 
@@ -1452,7 +1448,7 @@ async function runAmazonJob(jobId, dateFrom, dateTo, targetLeads, keyword) {
           consecutiveEmpty = 0;
 
           // Concurrency pool — keep CONCURRENCY slots busy
-          const CONCURRENCY = 50;
+          const CONCURRENCY = 100;
           await saveLog(jobId, 'info', `⚡ Processing ${pageBooks.length} authors with ${CONCURRENCY} concurrent workers...`);
 
           // Filter out already-seen ASINs (current run in-memory + DB for this job only)
