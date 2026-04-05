@@ -99,7 +99,7 @@ async function scrapeWithBrowser(url, waitSelector = null) {
     if (waitSelector) {
       await page.waitForSelector(waitSelector, { timeout: 10000 }).catch(() => {});
     } else {
-      await page.waitForTimeout(2000);
+      await new Promise(r => setTimeout(r, 2000));
     }
 
     const html = await page.content();
@@ -1559,45 +1559,38 @@ async function runAmazonJob(jobId, dateFrom, dateTo, targetLeads, keyword) {
             }
 
             // Option B — scrape book detail page for publisher + accurate date
+            // Use Browser API (not Web Unlocker) — Amazon blocks Web Unlocker on /dp/ pages
             // Skip for Kindle — no publisher field, saves BD call
             const isKindle = book.bookFormat === 'Kindle';
             if (!isKindle && (!book.publisher || !book.publishDate)) {
               try {
-                const detailHtml = await scrapeWithBrightData(`https://www.amazon.com/dp/${asin}`, jobId);
-                if (detailHtml) {
-                  // Publisher from detail page — multiple patterns for Amazon's varying layouts:
-                  // 1. New RPI widget: book_details-publisher
-                  // 2. Product details table: "Publisher :" row
-                  // 3. #byline_secondary_view_div or contributorNameID
-                  // 4. a-section a-spacing-none rpi-attribute pattern
-                  const pubM =
-                    detailHtml.match(/book_details-publisher[^>]*>.*?<span[^>]*>\s*([^<]{2,80}?)\s*<\/span>/s) ||
-                    detailHtml.match(/rpi-attribute-label[^>]*>\s*Publisher\s*<\/span>.*?rpi-attribute-value[^>]*>\s*<span[^>]*>\s*([^<]{2,80}?)\s*<\/span>/s) ||
-                    detailHtml.match(/Publisher\s*<\/(?:span|td|th|b|strong)>\s*(?:<[^>]+>)*\s*([A-Za-z0-9][^<\n]{2,60}?)\s*(?:<|[\n\r])/) ||
-                    detailHtml.match(/(?:"publisher"|"Publisher")\s*:\s*"([^"]{2,80})"/) ||
-                    detailHtml.match(/class="[^"]*publisher[^"]*"[^>]*>\s*([^<]{2,80}?)\s*<\//i);
-                  if (pubM && !book.publisher) {
-                    book.publisher = pubM[1].trim().replace(/\s+/g,' ').substring(0,60);
-                    await saveLog(jobId, 'info', `🏢 Publisher: ${book.publisher}`);
+                const detailHtml = await scrapeWithBrowser(`https://www.amazon.com/dp/${asin}`);
+                if (detailHtml && detailHtml.length > 10000) {
+                  // Amazon uses RPI carousel widgets with confirmed structure:
+                  // book_details-publisher → rpi-attribute-value → <span>PUBLISHER</span>
+                  // book_details-publication_date → rpi-attribute-value → <span>DATE</span>
+
+                  // Publisher — confirmed pattern from live Amazon HTML
+                  if (!book.publisher) {
+                    const pubSection = detailHtml.match(/book_details-publisher[\s\S]{0,800}?rpi-attribute-value[\s\S]{0,200}?<span[^>]*>\s*([^<]{2,80}?)\s*<\/span>/);
+                    if (pubSection) {
+                      book.publisher = pubSection[1].trim().replace(/\s+/g,' ').substring(0,60);
+                      await saveLog(jobId, 'info', `🏢 Publisher: ${book.publisher}`);
+                    }
                   }
-                  // Date from detail page — multiple patterns:
-                  // 1. New RPI widget: book_details-publication_date
-                  // 2. Product details table: "Publication date :" row
-                  // 3. JSON-LD or meta
+
+                  // Publication date — confirmed pattern from live Amazon HTML
                   if (!book.publishDate) {
-                    const dateM =
-                      detailHtml.match(/book_details-publication_date[^>]*>.*?<span[^>]*>\s*([^<]{4,30}?)\s*<\/span>/s) ||
-                      detailHtml.match(/rpi-attribute-label[^>]*>\s*Publication date\s*<\/span>.*?rpi-attribute-value[^>]*>\s*<span[^>]*>\s*([^<]{4,30}?)\s*<\/span>/s) ||
-                      detailHtml.match(/Publication date\s*<\/(?:span|td|th|b|strong)>\s*(?:<[^>]+>)*\s*([A-Z][a-z]+ \d+, \d{4}|\d{1,2}\/\d{1,2}\/\d{4}|\w+ \d{4})/) ||
-                      detailHtml.match(/"datePublished"\s*:\s*"([^"]{4,30})"/) ||
-                      detailHtml.match(/(?:"publication_date"|"publish_date")\s*:\s*"([^"]{4,30})"/);
-                    if (dateM) {
-                      book.publishDate = dateM[1].trim();
+                    const dateSection = detailHtml.match(/book_details-publication_date[\s\S]{0,800}?rpi-attribute-value[\s\S]{0,200}?<span[^>]*>\s*([^<]{4,30}?)\s*<\/span>/);
+                    if (dateSection) {
+                      book.publishDate = dateSection[1].trim();
                       await saveLog(jobId, 'info', `📅 Date from detail: ${book.publishDate}`);
                     }
                   }
                 }
-              } catch(e) {}
+              } catch(e) {
+                await saveLog(jobId, 'warning', `⚠️ Detail page error for ${asin}: ${e.message}`);
+              }
             }
 
             // Verify email
