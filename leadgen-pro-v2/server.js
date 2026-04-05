@@ -2190,21 +2190,21 @@ const PORT = process.env.PORT || 3000;
       console.log(`🚀 LeadGen Pro v2 running on port ${PORT}`);
       console.log(`🔑 APIs: Bright Data ✅ | Hunter ✅ | Gemini ✅`);
 
-      // Auto-resume interrupted amazon jobs after a short delay (let server fully boot first)
+      // Auto-resume interrupted amazon jobs — wait 15s for Neon to fully connect
       setTimeout(async () => {
         try {
           const interrupted = await db.prepare(`SELECT * FROM scrape_jobs WHERE status = 'interrupted' AND framework = 'amazon' ORDER BY id DESC`).all();
           for (const job of interrupted) {
             console.log(`🔄 Auto-resuming job #${job.id}...`);
-            await db.prepare(`UPDATE scrape_jobs SET status='running', completed_at=NULL WHERE id=?`).run(job.id);
+            await db.prepare(`UPDATE scrape_jobs SET status='running', completed_at=NULL, started_at=COALESCE(started_at, CURRENT_TIMESTAMP) WHERE id=?`).run(job.id);
             await saveLog(job.id, 'info', `🔄 Auto-resumed after server restart`);
             runAmazonJob(job.id, job.date_from, job.date_to, job.target_leads, job.keyword);
           }
           if (interrupted.length > 0) console.log(`✅ Resumed ${interrupted.length} job(s)`);
         } catch(e) {
-          console.error('Auto-resume error:', e.message);
+          console.error('Auto-resume error (non-fatal):', e.message);
         }
-      }, 3000);
+      }, 15000);
 
       // Self-ping every 10 minutes to prevent Render free tier from sleeping mid-job
       const SELF_URL = process.env.RENDER_EXTERNAL_URL || `http://localhost:${PORT}`;
