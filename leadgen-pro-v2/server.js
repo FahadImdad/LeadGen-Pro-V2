@@ -1007,28 +1007,7 @@ async function findAuthorContact(authorName, bookTitle, saveLog, jobId = null) {
   // Max Bright Data calls per author: 2 (Google + website)
   // ══════════════════════════════════════════════════════════════
 
-  // ── STEP 1: Hunter email finder on likely domains (FREE — no Bright Data) ──
-  // Try the 2 most common author domain patterns sequentially (not parallel — save Hunter credits)
-  const likelyDomains = [
-    `${firstName}${lastName}.com`,
-    `${nameSlug}.com`,
-  ];
-  for (const domain of likelyDomains) {
-    try {
-      const r = await axios.get(
-        `https://api.hunter.io/v2/email-finder?domain=${domain}&first_name=${encodeURIComponent(firstName)}&last_name=${encodeURIComponent(lastName)}&api_key=${HUNTER_API_KEY}`,
-        { timeout: 6000 }
-      ).catch(() => null);
-      const email = r?.data?.data?.email;
-      const score = r?.data?.data?.score || 0;
-      if (email && score >= 50) {
-        saveLog('success', `📧 Hunter domain: ${email} (${score}%)`);
-        return { email, website: `https://${domain}` };
-      }
-    } catch(e) {}
-  }
-
-  // ── STEP 2: Find author website FREE — DDG first, domain guess fallback ──
+  // ── STEP 1: Find author website FREE — DDG first, domain guess fallback ──
   // DuckDuckGo HTML doesn't block scrapers → no BD cost
   let foundWebsite = null;
 
@@ -1616,13 +1595,11 @@ async function runAmazonJob(jobId, dateFrom, dateTo, targetLeads, keyword) {
                   await saveLog(jobId, 'success', `🟡 MEDIUM: Gmail/Yahoo name match (${email})`);
                 }
               } else {
-                // Unknown email — run Hunter to verify
-                await saveLog(jobId, 'hunter', `📧 HUNTER.IO: Verifying ${email}...`);
-                const verification = await verifyEmail(email);
-                emailVerified = verification.valid;
-                emailStatus = verification.status;
-                emailConfidence = emailVerified ? 'high' : 'low';
-                await saveLog(jobId, emailVerified ? 'success' : 'warning', `${emailVerified ? '✅ HIGH' : '⚠️ LOW'}: HUNTER.IO ${emailStatus || 'unverified'}`);
+                // Unknown email — save as medium (skip Hunter verification)
+                emailVerified = true;
+                emailStatus = 'found_on_web';
+                emailConfidence = 'medium';
+                await saveLog(jobId, 'info', `🟡 MEDIUM: Email found on web (${email})`);
               }
             }
 
