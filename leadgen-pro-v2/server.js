@@ -1047,12 +1047,33 @@ async function findAuthorContact(authorName, bookTitle, saveLog, jobId = null) {
   saveLog('info', `🔍 ${authorName}...`);
 
   // ══════════════════════════════════════════════════════════════
-  // COST-OPTIMIZED FLOW — minimize Bright Data calls
-  // Priority: Hunter API (free) → Google (1 BD call) → scrape (1 BD call)
-  // Max Bright Data calls per author: 2 (Google + website)
+  // EMAIL FINDING FLOW
+  // Step 1: Hunter on guessed domains (finds emails even if not public)
+  // Step 2: DDG + domain guess to find website
+  // Step 3: Hunter on found domain
+  // Step 4: Scrape website as last resort
   // ══════════════════════════════════════════════════════════════
 
-  // ── STEP 1: Find author website — DDG + domain guessing in PARALLEL ──
+  // ── STEP 1: Hunter email-finder on likely domains ──
+  if (HUNTER_API_KEY) {
+    const likelyDomains = [`${firstName}${lastName}.com`, `${nameSlug}.com`];
+    for (const domain of likelyDomains) {
+      try {
+        const r = await axios.get(
+          `https://api.hunter.io/v2/email-finder?domain=${encodeURIComponent(domain)}&first_name=${encodeURIComponent(firstName)}&last_name=${encodeURIComponent(lastName)}&api_key=${HUNTER_API_KEY}`,
+          { timeout: 6000 }
+        ).catch(() => null);
+        const email = r?.data?.data?.email;
+        const score = r?.data?.data?.score || 0;
+        if (email && score >= 50) {
+          saveLog('success', `📧 Hunter: ${email} (${score}%)`);
+          return { email, website: `https://${domain}` };
+        }
+      } catch(e) {}
+    }
+  }
+
+  // ── STEP 2: Find author website — DDG + domain guessing in PARALLEL ──
   let foundWebsite = null;
 
   const domainCandidates = [
@@ -1061,15 +1082,12 @@ async function findAuthorContact(authorName, bookTitle, saveLog, jobId = null) {
     `${firstName}-${lastName}.com`,
   ];
 
-  // Run DDG search + all domain guesses simultaneously
   const [ddgResult, ...domainResults] = await Promise.all([
-    // DDG search (free)
     axios.get(`https://html.duckduckgo.com/html/?q=${encodeURIComponent('"' + authorName + '" author official website')}`, {
       timeout: 5000,
       headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36', 'Accept-Language': 'en-US,en;q=0.9' },
       maxRedirects: 2
     }).catch(() => null),
-    // Domain guesses (parallel, free direct HTTP)
     ...domainCandidates.map(domain =>
       axios.get(`https://${domain}`, {
         timeout: 3000, maxRedirects: 2,
@@ -1079,7 +1097,6 @@ async function findAuthorContact(authorName, bookTitle, saveLog, jobId = null) {
     )
   ]);
 
-  // Prefer DDG result (more accurate)
   if (ddgResult?.data) {
     const sites = extractRealWebsites(ddgResult.data);
     foundWebsite = sites.find(s => {
@@ -1089,11 +1106,7 @@ async function findAuthorContact(authorName, bookTitle, saveLog, jobId = null) {
       } catch { return false; }
     }) || null;
   }
-
-  // Fallback to domain guesses
-  if (!foundWebsite) {
-    foundWebsite = domainResults.find(r => r !== null) || null;
-  }
+  if (!foundWebsite) foundWebsite = domainResults.find(r => r !== null) || null;
 
   if (!foundWebsite) {
     saveLog('info', `⏩ No website for ${authorName}`);
@@ -1102,8 +1115,24 @@ async function findAuthorContact(authorName, bookTitle, saveLog, jobId = null) {
 
   saveLog('info', `🌐 ${foundWebsite}`);
 
-  // ── STEP 3: Parallel scrape homepage + /contact simultaneously ──
-  // Both fire at same time → 2x faster, same BD cost
+  // ── STEP 3: Hunter on found domain ──
+  if (HUNTER_API_KEY) {
+    try {
+      const domain = new URL(foundWebsite).hostname.replace(/^www\./, '');
+      const r = await axios.get(
+        `https://api.hunter.io/v2/email-finder?domain=${encodeURIComponent(domain)}&first_name=${encodeURIComponent(firstName)}&last_name=${encodeURIComponent(lastName)}&api_key=${HUNTER_API_KEY}`,
+        { timeout: 8000 }
+      ).catch(() => null);
+      const email = r?.data?.data?.email;
+      const score = r?.data?.data?.score || 0;
+      if (email && score >= 30) {
+        saveLog('success', `📧 Hunter domain: ${email} (${score}%)`);
+        return { email, website: foundWebsite };
+      }
+    } catch(e) {}
+  }
+
+  // ── STEP 4: Scrape homepage + /contact + /about in parallel ──
   const base = foundWebsite.replace(/\/$/, '');
 
   const [homeResult, contactResult, aboutResult] = await Promise.all([
