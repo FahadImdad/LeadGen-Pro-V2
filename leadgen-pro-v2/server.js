@@ -1007,49 +1007,47 @@ async function findAuthorContact(authorName, bookTitle, saveLog, jobId = null) {
   // Max Bright Data calls per author: 2 (Google + website)
   // ══════════════════════════════════════════════════════════════
 
-  // ── STEP 1: Find author website FREE — DDG first, domain guess fallback ──
-  // DuckDuckGo HTML doesn't block scrapers → no BD cost
+  // ── STEP 1: Find author website — DDG + domain guessing in PARALLEL ──
   let foundWebsite = null;
 
-  // 2a: DuckDuckGo search (direct HTTP, free)
-  try {
-    const ddgUrl = `https://html.duckduckgo.com/html/?q=${encodeURIComponent('"' + authorName + '" author official website')}`;
-    const resp = await axios.get(ddgUrl, {
-      timeout: 8000,
+  const domainCandidates = [
+    `${firstName}${lastName}.com`,
+    `${nameSlug}.com`,
+    `${firstName}-${lastName}.com`,
+  ];
+
+  // Run DDG search + all domain guesses simultaneously
+  const [ddgResult, ...domainResults] = await Promise.all([
+    // DDG search (free)
+    axios.get(`https://html.duckduckgo.com/html/?q=${encodeURIComponent('"' + authorName + '" author official website')}`, {
+      timeout: 5000,
       headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36', 'Accept-Language': 'en-US,en;q=0.9' },
       maxRedirects: 2
-    }).catch(() => null);
-    if (resp && resp.data) {
-      const sites = extractRealWebsites(resp.data);
-      foundWebsite = sites.find(s => {
-        try {
-          const host = new URL(s).hostname.toLowerCase().replace(/^www\./, '');
-          return nameParts.some(p => host.includes(p));
-        } catch { return false; }
-      }) || null;
-    }
-  } catch(e) {}
+    }).catch(() => null),
+    // Domain guesses (parallel, free direct HTTP)
+    ...domainCandidates.map(domain =>
+      axios.get(`https://${domain}`, {
+        timeout: 3000, maxRedirects: 2,
+        headers: { 'User-Agent': 'Mozilla/5.0' },
+        validateStatus: s => s < 400
+      }).then(r => r.status < 400 ? `https://${domain}` : null).catch(() => null)
+    )
+  ]);
 
-  // 2b: Domain pattern guessing (free direct HTTP) if DDG found nothing
-  if (!foundWebsite) {
-    const domainCandidates = [
-      `${firstName}${lastName}.com`,
-      `${nameSlug}.com`,
-      `${firstName}-${lastName}.com`,
-    ];
-    for (const domain of domainCandidates) {
+  // Prefer DDG result (more accurate)
+  if (ddgResult?.data) {
+    const sites = extractRealWebsites(ddgResult.data);
+    foundWebsite = sites.find(s => {
       try {
-        const r = await axios.get(`https://${domain}`, {
-          timeout: 4000, maxRedirects: 2,
-          headers: { 'User-Agent': 'Mozilla/5.0' },
-          validateStatus: s => s < 400
-        }).catch(() => null);
-        if (r && r.status < 400) {
-          foundWebsite = `https://${domain}`;
-          break;
-        }
-      } catch(e) {}
-    }
+        const host = new URL(s).hostname.toLowerCase().replace(/^www\./, '');
+        return nameParts.some(p => host.includes(p));
+      } catch { return false; }
+    }) || null;
+  }
+
+  // Fallback to domain guesses
+  if (!foundWebsite) {
+    foundWebsite = domainResults.find(r => r !== null) || null;
   }
 
   if (!foundWebsite) {
@@ -1063,18 +1061,16 @@ async function findAuthorContact(authorName, bookTitle, saveLog, jobId = null) {
   // Both fire at same time → 2x faster, same BD cost
   const base = foundWebsite.replace(/\/$/, '');
 
-  const [homeResult, contactResult] = await Promise.all([
+  const [homeResult, contactResult, aboutResult] = await Promise.all([
     fetchEmails(base),
-    fetchEmails(`${base}/contact`)
+    fetchEmails(`${base}/contact`),
+    fetchEmails(`${base}/about`)
   ]);
 
-  if (homeResult.email) {
-    saveLog('success', `📧 Found on homepage: ${homeResult.email}`);
-    return { email: homeResult.email, website: foundWebsite };
-  }
-  if (contactResult.email) {
-    saveLog('success', `📧 Found on /contact: ${contactResult.email}`);
-    return { email: contactResult.email, website: foundWebsite };
+  const found = homeResult.email || contactResult.email || aboutResult.email;
+  if (found) {
+    saveLog('success', `📧 Found: ${found}`);
+    return { email: found, website: foundWebsite };
   }
 
   saveLog('info', `⏩ No email found for ${authorName} (website-only)`);
