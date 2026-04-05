@@ -1573,39 +1573,6 @@ async function runAmazonJob(jobId, dateFrom, dateTo, targetLeads, keyword) {
               } catch(e) {}
             }
 
-            // Option B — scrape book detail page for publisher + accurate date
-            // Use Browser API (not Web Unlocker) — Amazon blocks Web Unlocker on /dp/ pages
-            // Always fetch for non-Kindle books — publisher NEVER comes from search listing
-            const isKindle = book.bookFormat === 'Kindle';
-            if (!isKindle) {
-              try {
-                const detailHtml = await scrapeWithBrowser(`https://www.amazon.com/dp/${asin}`);
-                if (detailHtml && detailHtml.length > 10000) {
-                  // Amazon uses RPI carousel widgets with confirmed structure:
-                  // book_details-publisher → rpi-attribute-value → <span>PUBLISHER</span>
-                  // book_details-publication_date → rpi-attribute-value → <span>DATE</span>
-
-                  // Publisher — ALWAYS extract (never available on search listing)
-                  const pubSection = detailHtml.match(/book_details-publisher[\s\S]{0,800}?rpi-attribute-value[\s\S]{0,200}?<span[^>]*>\s*([^<]{2,80}?)\s*<\/span>/);
-                  if (pubSection) {
-                    book.publisher = pubSection[1].trim().replace(/\s+/g,' ').substring(0,60);
-                    await saveLog(jobId, 'info', `🏢 Publisher: ${book.publisher}`);
-                  }
-
-                  // Publication date — always extract accurate date from detail page (search listing truncates it)
-                  const dateSection = detailHtml.match(/book_details-publication_date[\s\S]{0,800}?rpi-attribute-value[\s\S]{0,200}?<span[^>]*>\s*([^<]{4,30}?)\s*<\/span>/);
-                  if (dateSection) {
-                    book.publishDate = dateSection[1].trim();
-                    await saveLog(jobId, 'info', `📅 Date: ${book.publishDate}`);
-                  }
-                } else {
-                  await saveLog(jobId, 'warning', `⚠️ Detail page empty/blocked for ${asin}`);
-                }
-              } catch(e) {
-                await saveLog(jobId, 'warning', `⚠️ Detail page error for ${asin}: ${e.message}`);
-              }
-            }
-
             // Verify email
             let emailVerified = false;
             let emailStatus = null;
@@ -1676,6 +1643,29 @@ async function runAmazonJob(jobId, dateFrom, dateTo, targetLeads, keyword) {
               if (emailExists) {
                 await saveLog(jobId, 'info', `⏭️ SKIP (email already collected): ${email}`);
                 return;
+              }
+            }
+
+            // Fetch Amazon detail page for publisher + accurate date
+            // Done HERE (after all filters) so we only pay for leads we actually save
+            const isKindle = book.bookFormat === 'Kindle';
+            if (!isKindle) {
+              try {
+                const detailHtml = await scrapeWithBrowser(`https://www.amazon.com/dp/${asin}`);
+                if (detailHtml && detailHtml.length > 10000) {
+                  const pubSection = detailHtml.match(/book_details-publisher[\s\S]{0,800}?rpi-attribute-value[\s\S]{0,200}?<span[^>]*>\s*([^<]{2,80}?)\s*<\/span>/);
+                  if (pubSection) {
+                    book.publisher = pubSection[1].trim().replace(/\s+/g,' ').substring(0,60);
+                    await saveLog(jobId, 'info', `🏢 Publisher: ${book.publisher}`);
+                  }
+                  const dateSection = detailHtml.match(/book_details-publication_date[\s\S]{0,800}?rpi-attribute-value[\s\S]{0,200}?<span[^>]*>\s*([^<]{4,30}?)\s*<\/span>/);
+                  if (dateSection) {
+                    book.publishDate = dateSection[1].trim();
+                    await saveLog(jobId, 'info', `📅 Date: ${book.publishDate}`);
+                  }
+                }
+              } catch(e) {
+                await saveLog(jobId, 'warning', `⚠️ Detail page error for ${asin}: ${e.message}`);
               }
             }
 
