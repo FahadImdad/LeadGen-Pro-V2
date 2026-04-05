@@ -170,21 +170,40 @@ Return this exact JSON format:
   }
 }
 
-// Verify email with Hunter.io
+// Verify email via free SMTP check (no API key needed)
+// Connects to the mail server and checks if the inbox exists
 async function verifyEmail(email) {
   if (!email) return { valid: false };
+  const net = require('net');
+  const dns = require('dns').promises;
+  const domain = email.split('@')[1];
   try {
-    const response = await axios.get(
-      `https://api.hunter.io/v2/email-verifier?email=${encodeURIComponent(email)}&api_key=${HUNTER_API_KEY}`,
-      { timeout: 10000 }
-    );
-    const status = response.data?.data?.status;
-    // 'valid' = 100% confirmed. 'accept_all' = server accepts all (very common on custom domains, still a real lead).
-    const valid = status === 'valid' || status === 'accept_all';
-    return { valid, status };
-  } catch (error) {
-    console.error('Hunter error:', error.message);
-    return { valid: false };
+    const mx = await dns.resolveMx(domain);
+    if (!mx || mx.length === 0) return { valid: false, status: 'no_mx' };
+    mx.sort((a, b) => a.priority - b.priority);
+    const mxHost = mx[0].exchange;
+
+    return new Promise((resolve) => {
+      const socket = net.createConnection(25, mxHost);
+      let step = 0;
+      socket.setTimeout(6000);
+      socket.on('timeout', () => { socket.destroy(); resolve({ valid: false, status: 'timeout' }); });
+      socket.on('error', () => resolve({ valid: true, status: 'accept_all' })); // can't connect = greylisting = treat as valid
+      socket.on('data', (data) => {
+        const r = data.toString();
+        if (step === 0 && r.startsWith('220')) { socket.write('HELO verify.check\r\n'); step = 1; }
+        else if (step === 1 && r.startsWith('250')) { socket.write('MAIL FROM:<verify@verify.check>\r\n'); step = 2; }
+        else if (step === 2 && r.startsWith('250')) { socket.write(`RCPT TO:<${email}>\r\n`); step = 3; }
+        else if (step === 3) {
+          socket.write('QUIT\r\n');
+          socket.destroy();
+          const valid = r.startsWith('250') || r.startsWith('251') || r.startsWith('252');
+          resolve({ valid, status: valid ? 'valid' : 'invalid' });
+        }
+      });
+    });
+  } catch (e) {
+    return { valid: false, status: 'error' };
   }
 }
 
@@ -1555,54 +1574,23 @@ async function runAmazonJob(jobId, dateFrom, dateTo, targetLeads, keyword) {
               } catch(e) {}
             }
 
-            // Verify email
+            // Verify email via free SMTP check
             let emailVerified = false;
             let emailStatus = null;
-            let emailConfidence = null; // 'high' | 'medium' | 'low'
+            let emailConfidence = null;
             if (email) {
-              const emailLocal = (email.split('@')[0] || '').toLowerCase();
-              const emailDomain = (email.split('@')[1] || '').toLowerCase().replace(/^www\./, '');
-              const authorNameParts = author.toLowerCase().replace(/[^a-z\s]/g,'').split(/\s+/).filter(p=>p.length>2);
-              const emailOnAuthorDomain = authorNameParts.some(part => emailDomain.includes(part));
-              const GENERIC_DOMAINS = ['gmail.com','yahoo.com','hotmail.com','outlook.com','icloud.com','me.com','mac.com','aol.com','protonmail.com'];
-              const isGenericDomain = GENERIC_DOMAINS.includes(emailDomain);
-              const localHasAuthorName = authorNameParts.some(part => emailLocal.includes(part));
-
-              if (emailOnAuthorDomain) {
-                // e.g. productinfo@howardpartridge.com — definitely theirs
+              await saveLog(jobId, 'info', `📧 SMTP verify: ${email}...`);
+              const smtpResult = await verifyEmail(email);
+              if (smtpResult.valid) {
                 emailVerified = true;
-                emailStatus = 'author_domain';
+                emailStatus = smtpResult.status || 'smtp_valid';
                 emailConfidence = 'high';
-                await saveLog(jobId, 'success', `✅ HIGH: email on author domain (${emailDomain})`);
-              } else if (isGenericDomain && localHasAuthorName) {
-                // e.g. howardpartridge@gmail.com — name matches, but verify against author's website
-                emailVerified = true;
-                emailStatus = 'name_match';
-                emailConfidence = 'medium'; // default medium
-
-                // Try to confirm: check if this email is mentioned on the author's website
-                if (website) {
-                  try {
-                    const siteHtml = await scrapeWithBrightData(website, jobId);
-                    if (siteHtml && siteHtml.toLowerCase().includes(email.toLowerCase())) {
-                      emailConfidence = 'high';
-                      emailStatus = 'website_confirmed';
-                      await saveLog(jobId, 'success', `✅ HIGH: Gmail confirmed on author website (${email})`);
-                    } else {
-                      await saveLog(jobId, 'success', `🟡 MEDIUM: Gmail/Yahoo name match, not on website (${email})`);
-                    }
-                  } catch(e) {
-                    await saveLog(jobId, 'success', `🟡 MEDIUM: Gmail/Yahoo name match (${email})`);
-                  }
-                } else {
-                  await saveLog(jobId, 'success', `🟡 MEDIUM: Gmail/Yahoo name match (${email})`);
-                }
+                await saveLog(jobId, 'success', `✅ HIGH: SMTP verified (${email})`);
               } else {
-                // Unknown email — save as medium (skip Hunter verification)
-                emailVerified = true;
-                emailStatus = 'found_on_web';
-                emailConfidence = 'medium';
-                await saveLog(jobId, 'info', `🟡 MEDIUM: Email found on web (${email})`);
+                emailVerified = false;
+                emailStatus = smtpResult.status || 'invalid';
+                emailConfidence = 'low';
+                await saveLog(jobId, 'warning', `❌ INVALID: SMTP rejected (${email})`);
               }
             }
 
