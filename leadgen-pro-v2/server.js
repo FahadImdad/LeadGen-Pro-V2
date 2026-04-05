@@ -1448,7 +1448,7 @@ async function runAmazonJob(jobId, dateFrom, dateTo, targetLeads, keyword) {
           consecutiveEmpty = 0;
 
           // Concurrency pool — keep CONCURRENCY slots busy
-          const CONCURRENCY = 200;
+          const CONCURRENCY = 100;
           await saveLog(jobId, 'info', `⚡ Processing ${pageBooks.length} authors with ${CONCURRENCY} concurrent workers...`);
 
           // Filter out already-seen ASINs (current run in-memory + DB for this job only)
