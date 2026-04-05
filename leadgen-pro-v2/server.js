@@ -1668,11 +1668,7 @@ async function runAmazonJob(jobId, dateFrom, dateTo, targetLeads, keyword) {
               return;
             }
 
-            // Only save HIGH confidence email leads — skip medium/unverified
-            if (!emailVerified || emailConfidence !== 'high') {
-              await saveLog(jobId, 'info', `⏭️ SKIP (not high confidence): ${author} | ${email || 'no email'}`);
-              return;
-            }
+
 
             // Hard skip if this email already exists ANYWHERE in DB — no point saving or contacting again
             if (email && emailVerified) {
