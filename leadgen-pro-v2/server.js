@@ -877,11 +877,27 @@ function parseAmazonNewReleasesHtml(html) {
     // Detect book format from listing card
     const formatArea = after.substring(0, 400);
     let bookFormat = 'Unknown';
-    if (/Kindle|eBook|Digital/i.test(formatArea)) bookFormat = 'Kindle';
+    if (/Audiobook|Audible|Audio CD/i.test(formatArea)) bookFormat = 'Audiobook';
+    else if (/Kindle|eBook|Digital/i.test(formatArea)) bookFormat = 'Kindle';
     else if (/Hardcover/i.test(formatArea)) bookFormat = 'Hardcover';
     else if (/Paperback/i.test(formatArea)) bookFormat = 'Paperback';
 
-    books.push({ asin, title, author, publisher, publishDate, reviewCount, bookFormat, amazonUrl: `https://www.amazon.com/dp/${asin}` });
+    // Check if other format ASINs are listed (format switcher on listing card)
+    // Pattern: other-offers links or binding switcher with different ASINs
+    const fullCard = html.substring(Math.max(0, m.index - 500), m.index + m[0].length + 1200);
+    const formatLinks = [...fullCard.matchAll(/\/dp\/([A-Z0-9]{10})\/[^"]*"[^>]*>[^<]*(Paperback|Hardcover|Kindle|Audiobook)/gi)];
+    let preferredAsin = asin;
+    let preferredFormat = bookFormat;
+    // Priority: Paperback > Hardcover > Kindle > Audiobook
+    const formatPriority = { 'Paperback': 4, 'Hardcover': 3, 'Kindle': 2, 'Unknown': 1, 'Audiobook': 0 };
+    for (const [, altAsin, altFormat] of formatLinks) {
+      if (altAsin !== asin && formatPriority[altFormat] > formatPriority[preferredFormat]) {
+        preferredAsin = altAsin;
+        preferredFormat = altFormat;
+      }
+    }
+
+    books.push({ asin: preferredAsin, title, author, publisher, publishDate, reviewCount, bookFormat: preferredFormat, amazonUrl: `https://www.amazon.com/dp/${preferredAsin}` });
   }
 
   return books;
@@ -1517,6 +1533,12 @@ async function runAmazonJob(jobId, dateFrom, dateTo, targetLeads, keyword) {
 
             if (isNonEnglish) {
               await saveLog(jobId, 'info', `⏭️ SKIP (non-English): ${title.substring(0, 60)}`);
+              return;
+            }
+
+            // Format filter — skip Audiobook-only listings (no use for book publishing services)
+            if (book.bookFormat === 'Audiobook') {
+              await saveLog(jobId, 'info', `⏭️ SKIP (audiobook only): ${title.substring(0, 60)}`);
               return;
             }
 
