@@ -83,8 +83,24 @@ async function scrapeWithBrightData(url, jobId = null) {
   }
 }
 
+// Semaphore to limit concurrent browser sessions (Bright Data has limited slots)
+const BROWSER_CONCURRENCY = 5;
+let browserActive = 0;
+const browserQueue = [];
+function browserAcquire() {
+  return new Promise(resolve => {
+    if (browserActive < BROWSER_CONCURRENCY) { browserActive++; resolve(); }
+    else browserQueue.push(resolve);
+  });
+}
+function browserRelease() {
+  if (browserQueue.length > 0) { browserQueue.shift()(); }
+  else browserActive--;
+}
+
 // Scrape using Bright Data Browser API (with JS rendering)
 async function scrapeWithBrowser(url, waitSelector = null) {
+  await browserAcquire();
   let browser = null;
   try {
     browser = await puppeteer.connect({
@@ -113,6 +129,7 @@ async function scrapeWithBrowser(url, waitSelector = null) {
     if (browser) {
       await browser.close().catch(() => {});
     }
+    browserRelease();
   }
 }
 
