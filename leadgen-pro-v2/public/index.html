@@ -447,8 +447,8 @@
       filtered.forEach(job => {
         const existing = document.getElementById(`task-card-${job.id}`);
         if (!existing) {
-          // New card — inject it
-          container.insertAdjacentHTML('beforeend', renderJobCard(job, framework));
+          // New card — inject at TOP
+          container.insertAdjacentHTML('afterbegin', renderJobCard(job, framework));
           const expanded = _minimized[job.id] === true || (job.status === 'running');
           if (expanded) loadTaskCardContent(job.id, job.framework, framework);
         } else {
