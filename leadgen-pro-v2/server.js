@@ -1021,20 +1021,20 @@ async function findAuthorContact(authorName, bookTitle, saveLog, jobId = null) {
 
   function extractEmails(html) {
     const raw = [...new Set((html.match(emailRegex) || []).filter(e => !isBlockedEmail(e)))];
-    // Priority 1: name in local part (john@johnsmith.com)
+    // Priority 1: name in local part (john@johnsmith.com) — strongest signal
     const nameInLocal = raw.filter(e => {
       const local = e.split('@')[0].toLowerCase();
       return nameParts.some(p => local.includes(p));
     });
     if (nameInLocal.length > 0) return nameInLocal;
-    // Priority 2: name in domain (info@johnsmith.com)
+    // Priority 2: name in domain (info@johnsmith.com) — still theirs
     const nameInDomain = raw.filter(e => {
       const domain = (e.split('@')[1] || '').toLowerCase();
       return nameParts.some(p => domain.includes(p));
     });
     if (nameInDomain.length > 0) return nameInDomain;
-    // Priority 3: any non-blocked email
-    return raw;
+    // No name match → return empty (don't pick random emails from the page)
+    return [];
   }
 
   function extractRealWebsites(html) {
