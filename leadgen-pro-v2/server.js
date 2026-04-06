@@ -725,8 +725,8 @@ function isBlockedEmail(email) {
   // Block placeholder local parts
   const local = email.split('@')[0].toLowerCase();
   if (/^(email|user|name|yourname|your\.name|your-name|firstname|lastname|your\.email|youremail|someone|test|info@info|hello@hello)$/.test(local)) return true;
-  // Block generic/role emails — not personal author emails
-  if (/^(user|admin|noreply|no-reply|test|example|support|help|sales|webmaster|postmaster|hostmaster|abuse|privacy|legal|billing|accounts|newsletter|news|media|press|pr|marketing|office|staff|team|service|enquiries|enquiry|contact|info|hello|hey|hi|mail|email|me|web|site|general|reception|editor|editors|submit|submissions|invites|invite|orders|order|shop|store|social|digital|ventas|hola|bonjour|ciao|servicio)@/i.test(email)) return true;
+  // Block clear spam/system emails — but allow info@, support@, contact@ on custom domains (handled as MEDIUM)
+  if (/^(user|admin|noreply|no-reply|test|example|help|sales|webmaster|postmaster|hostmaster|abuse|privacy|legal|billing|accounts|newsletter|news|media|press|pr|marketing|staff|service|submit|submissions|invites|invite|orders|order|shop|store|social|digital|ventas|hola|bonjour|ciao|servicio)@/i.test(email)) return true;
   if (/\d+\.\d+\.\d+/.test(email)) return true;
   if (local.length > 40) return true;
   if (BLOCKED_DOMAINS.some(d => email.toLowerCase().includes(d))) return true;
@@ -874,9 +874,14 @@ function parseAmazonNewReleasesHtml(html) {
                     after.match(/by <\/span><a[^>]*>([^<]{2,80})<\/a>/);
     const author = authorM ? decodeEntities(authorM[1]) : 'Unknown';
 
-    // Publication date
+    // Publication date — fix truncated year (Amazon shows "Apr 2, 202" instead of "Apr 2, 2026")
     const dateM = after.match(/a-color-secondary a-text-normal">([^<]{4,30})<\/span>/);
-    const publishDate = dateM ? decodeEntities(dateM[1]) : '';
+    let publishDate = dateM ? decodeEntities(dateM[1]) : '';
+    // Fix truncated year: "Apr 2, 202" → "Apr 2, 2026" (assume current decade)
+    if (publishDate && /[A-Za-z]+ \d{1,2}, \d{3}$/.test(publishDate.trim())) {
+      const currentYear = new Date().getFullYear().toString();
+      publishDate = publishDate.trim() + currentYear.slice(-1); // append last digit of year
+    }
 
     // Publisher — paperback listings show it in several patterns
     // Pattern 1: "Publisher : <a>NAME</a>" or "Publisher : NAME"
@@ -1084,6 +1089,10 @@ async function findAuthorContact(authorName, bookTitle, saveLog, jobId = null) {
     `${firstName}${lastName}.com`,
     `${nameSlug}.com`,
     `${firstName}-${lastName}.com`,
+    `${firstName}${lastName}author.com`,
+    `author${firstName}${lastName}.com`,
+    `${nameSlug}author.com`,
+    `author${nameSlug}.com`,
   ];
 
   const [ddgResult, ...domainResults] = await Promise.all([
@@ -1657,14 +1666,21 @@ async function runAmazonJob(jobId, dateFrom, dateTo, targetLeads, keyword) {
               const isGenericDomain = GENERIC_DOMAINS.includes(emailDomain);
               const localHasAuthorName = authorNameParts.some(part => emailLocal.includes(part));
 
+              const BUSINESS_LOCALS = ['info','support','contact','hello','hey','hi','admin','mail','enquiries','enquiry','office','team'];
+              const isBusinessLocal = BUSINESS_LOCALS.includes(emailLocal);
+
               if (emailOnAuthorDomain || localHasAuthorName) {
-                // Author's name in domain OR local part → definitely theirs
-                // e.g. alain@alainsamson.com OR alainsamson@gmail.com
+                // Author's name in domain OR local part → definitely theirs → HIGH
                 const status = isGenericDomain ? 'name_match' : 'author_domain';
                 emailVerified = true; emailStatus = status; emailConfidence = 'high';
                 await saveLog(jobId, 'success', `✅ HIGH (${status}): ${email}`);
+              } else if (!isGenericDomain && isBusinessLocal) {
+                // support@johnsmith.com or info@johnsmith.com — generic local but author domain
+                // Could be author's business email — save as MEDIUM2 (not counted as HIGH)
+                emailVerified = true; emailStatus = 'business_email'; emailConfidence = 'medium';
+                await saveLog(jobId, 'info', `🟡 MEDIUM (business email on author domain): ${email}`);
               } else {
-                // No name match — could be anyone's email, skip
+                // No name match, not on author domain — skip
                 emailVerified = false; emailStatus = 'unverified'; emailConfidence = 'low';
                 await saveLog(jobId, 'warning', `❌ SKIP (no name match): ${email}`);
               }
