@@ -627,7 +627,7 @@
           const countRes = await fetch(`/api/jobs/${jobId}/logs?since=0&countOnly=1`);
           const countData = await countRes.json();
           const totalLogs = countData.total || 0;
-          const since = Math.max(0, totalLogs - 50);
+          const since = 0; // load all logs
           const r = await fetch(`/api/jobs/${jobId}/logs?since=${since}`);
           const data = await r.json();
           const logs = data.logs || [];
@@ -988,7 +988,7 @@
               div.textContent = `[${ts}] ${log.message}`;
               inlineLog.appendChild(div);
               inlineLog.scrollTop = inlineLog.scrollHeight;
-              while (inlineLog.children.length > 500) inlineLog.removeChild(inlineLog.firstChild);
+              // No cap — show all logs
             }
 
             // Update stats counters from log messages

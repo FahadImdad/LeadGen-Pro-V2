@@ -1224,7 +1224,7 @@ app.get('/api/jobs/:jobId/logs', async (req, res) => {
     return res.json({ total: Number(row?.cnt || row?.c || 0) });
   }
 
-  const logs = await db.prepare('SELECT * FROM job_logs WHERE job_id = ? AND id > ? ORDER BY id ASC LIMIT 100').all(jobId, since);
+  const logs = await db.prepare('SELECT * FROM job_logs WHERE job_id = ? AND id > ? ORDER BY id ASC LIMIT 500').all(jobId, since);
   const job = await db.prepare('SELECT * FROM scrape_jobs WHERE id = ?').get(jobId);
   res.json({ logs, job });
 });
