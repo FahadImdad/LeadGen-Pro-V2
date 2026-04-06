@@ -1148,26 +1148,33 @@ async function findAuthorContact(authorName, bookTitle, saveLog, jobId = null) {
   const base = foundWebsite.replace(/\/$/, '');
   const foundDomain = new URL(foundWebsite).hostname.replace(/^www\./, '');
 
-  const [hunterResult, homeResult, contactResult, aboutResult] = await Promise.all([
-    HUNTER_API_KEY ? axios.get(
-      `https://api.hunter.io/v2/email-finder?domain=${encodeURIComponent(foundDomain)}&first_name=${encodeURIComponent(firstName)}&last_name=${encodeURIComponent(lastName)}&api_key=${HUNTER_API_KEY}`,
-      { timeout: 8000 }
-    ).then(r => ({ email: r?.data?.data?.email, score: r?.data?.data?.score || 0 })).catch(() => null) : Promise.resolve(null),
+  // Scrape website first (free) — Hunter only if nothing found (saves credits)
+  const [homeResult, contactResult, aboutResult] = await Promise.all([
     fetchEmails(base),
     fetchEmails(`${base}/contact`),
     fetchEmails(`${base}/about`)
   ]);
 
-  // Hunter takes priority (more accurate), then website scraping
-  if (hunterResult?.email && hunterResult?.score >= 30) {
-    saveLog('success', `📧 Hunter: ${hunterResult.email} (${hunterResult.score}%)`);
-    return { email: hunterResult.email, website: foundWebsite };
-  }
-
   const found = homeResult.email || contactResult.email || aboutResult.email;
   if (found) {
     saveLog('success', `📧 Found on website: ${found}`);
     return { email: found, website: foundWebsite };
+  }
+
+  // Hunter as fallback — only called when website has no email
+  if (HUNTER_API_KEY) {
+    try {
+      const r = await axios.get(
+        `https://api.hunter.io/v2/email-finder?domain=${encodeURIComponent(foundDomain)}&first_name=${encodeURIComponent(firstName)}&last_name=${encodeURIComponent(lastName)}&api_key=${HUNTER_API_KEY}`,
+        { timeout: 8000 }
+      ).catch(() => null);
+      const hunterEmail = r?.data?.data?.email;
+      const score = r?.data?.data?.score || 0;
+      if (hunterEmail && score >= 30) {
+        saveLog('success', `📧 Hunter: ${hunterEmail} (${score}%)`);
+        return { email: hunterEmail, website: foundWebsite };
+      }
+    } catch(e) {}
   }
 
   saveLog('info', `⏩ No email found for ${authorName} (website-only)`);
