@@ -444,12 +444,12 @@
       }
 
       // Only re-render cards whose status changed — avoid resetting lead counts on every poll
-      // Sort: newest first, append to bottom = newest always at bottom
-      const sortedJobs = [...filtered].sort((a, b) => a.id - b.id);
+      // Sort: newest first (highest ID on top)
+      const sortedJobs = [...filtered].sort((a, b) => b.id - a.id);
       sortedJobs.forEach(job => {
         const existing = document.getElementById(`task-card-${job.id}`);
         if (!existing) {
-          // New card — append to bottom (newest at bottom)
+          // New card — append to end (sorted DESC so newest renders last = top after sort)
           container.insertAdjacentHTML('beforeend', renderJobCard(job, framework));
           const expanded = _minimized[job.id] === true || (job.status === 'running');
           if (expanded) loadTaskCardContent(job.id, job.framework, framework);
@@ -480,6 +480,10 @@
         const id = parseInt(el.id.replace('task-card-',''));
         if (!filtered.find(j => j.id === id)) el.remove();
       });
+      // Re-order cards so newest (highest ID) is always on top
+      const allCards = [...container.querySelectorAll('[id^="task-card-"]')];
+      allCards.sort((a, b) => parseInt(b.id.replace('task-card-','')) - parseInt(a.id.replace('task-card-','')));
+      allCards.forEach(card => container.appendChild(card));
       // If container is empty after removals
       if (!container.querySelector('[id^="task-card-"]')) {
         container.innerHTML = '<div class="text-gray-500 text-sm">No previous tasks.</div>';
