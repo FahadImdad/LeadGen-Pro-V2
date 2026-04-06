@@ -1523,8 +1523,11 @@ async function runAmazonJob(jobId, dateFrom, dateTo, targetLeads, keyword) {
           }
           const fromYM = dateFrom.substring(0, 7);
           const datedBooks = pageBooks.filter(b => b.publishDate && parseYM(b.publishDate));
-          if (datedBooks.length > 0 && datedBooks.every(b => parseYM(b.publishDate) < fromYM)) {
-            await saveLog(jobId, 'info', `⏭️ All books in batch older than ${dateFrom} — skipping to next category`);
+          // Skip to next category if majority of dated books are before our range
+          // (allows some undated books without blocking the skip)
+          const beforeRange = datedBooks.filter(b => parseYM(b.publishDate) < fromYM);
+          if (datedBooks.length >= 10 && beforeRange.length >= datedBooks.length * 0.8) {
+            await saveLog(jobId, 'info', `⏭️ ${beforeRange.length}/${datedBooks.length} books older than ${dateFrom} — skipping to next category`);
             page_num = maxPages + 1; // jump to next category
             continue;
           }
