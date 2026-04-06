@@ -1556,7 +1556,7 @@ async function runAmazonJob(jobId, dateFrom, dateTo, targetLeads, keyword) {
             // OR has no spaces (single word that looks like a brand, not a name)
             const authorWords = author.trim().split(/\s+/);
             const lastWord = authorWords[authorWords.length - 1].toLowerCase();
-            const publisherKeywords = ['press','books','publishing','publishers','publications','studio','studios','media','planners','planner','designs','systems','solutions','collective','group','hub','inc','llc','ltd','co.','corp','academy','institute','network','digital','creative','creatives','productions','records','works','workshop','workshops'];
+            const publisherKeywords = ['press','books','publishing','publishers','publications','studio','studios','media','planners','planner','designs','systems','solutions','collective','group','hub','inc','llc','ltd','co.','corp','academy','institute','network','digital','creative','creatives','productions','records','works','workshop','workshops','editions','edition','ink','arts','entertainment','ventures','labs','co','brand','brands','house'];
             if (publisherKeywords.includes(lastWord)) {
               await saveLog(jobId, 'info', `⏭️ SKIP (publisher/brand name): ${author}`);
               return;
