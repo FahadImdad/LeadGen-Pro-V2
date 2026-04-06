@@ -444,8 +444,8 @@
       }
 
       // Only re-render cards whose status changed — avoid resetting lead counts on every poll
-      // Sort: newest (highest ID) first before rendering
-      const sortedJobs = [...filtered].sort((a, b) => b.id - a.id);
+      // Sort: oldest first so afterbegin stacks newest on top
+      const sortedJobs = [...filtered].sort((a, b) => a.id - b.id);
       sortedJobs.forEach(job => {
         const existing = document.getElementById(`task-card-${job.id}`);
         if (!existing) {
