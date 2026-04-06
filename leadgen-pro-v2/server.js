@@ -1094,7 +1094,9 @@ async function findAuthorContact(authorName, bookTitle, saveLog, jobId = null) {
   // Step 4: Scrape website as last resort
   // ══════════════════════════════════════════════════════════════
 
-  // ── STEP 1: Find author website — DDG (rate-limited) + domain guessing in PARALLEL ──
+  // ── STEP 1: Find author website — search "Author Name + Book Title" to authenticate ──
+  // Searching with book title confirms the website actually belongs to THIS author
+  // (avoids wrong person with same name)
   let foundWebsite = null;
 
   const domainCandidates = [
@@ -1107,10 +1109,14 @@ async function findAuthorContact(authorName, bookTitle, saveLog, jobId = null) {
     `author${nameSlug}.com`,
   ];
 
+  // Search with author name + book title for stronger verification
+  const bookTitleShort = (bookTitle || '').split(':')[0].substring(0, 40); // first part before colon
+  const searchQuery = bookTitleShort
+    ? `"${authorName}" "${bookTitleShort}"`
+    : `"${authorName}" author official website`;
+
   const [ddgResult, ...domainResults] = await Promise.all([
-    // DDG with semaphore + jitter to avoid rate limiting across 150 workers
-    ddgSearch(`"${authorName}" author official website`),
-    // Domain guesses with 3s timeout (already enforced)
+    ddgSearch(searchQuery),
     ...domainCandidates.map(domain =>
       axios.get(`https://${domain}`, {
         timeout: 3000, maxRedirects: 2,
@@ -1122,12 +1128,13 @@ async function findAuthorContact(authorName, bookTitle, saveLog, jobId = null) {
 
   if (ddgResult?.data) {
     const sites = extractRealWebsites(ddgResult.data);
+    // Prefer sites where domain contains author name (strongest signal)
     foundWebsite = sites.find(s => {
       try {
         const host = new URL(s).hostname.toLowerCase().replace(/^www\./, '');
         return nameParts.some(p => host.includes(p));
       } catch { return false; }
-    }) || null;
+    }) || sites[0] || null; // fallback to first result if no name match
   }
   if (!foundWebsite) foundWebsite = domainResults.find(r => r !== null) || null;
 
