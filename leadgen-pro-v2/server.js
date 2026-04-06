@@ -1094,11 +1094,7 @@ async function findAuthorContact(authorName, bookTitle, saveLog, jobId = null) {
   // Step 4: Scrape website as last resort
   // ══════════════════════════════════════════════════════════════
 
-  // ── STEP 1: Find author website — search "Author Name + Book Title" to authenticate ──
-  // Searching with book title confirms the website actually belongs to THIS author
-  // (avoids wrong person with same name)
-  let foundWebsite = null;
-
+  // ── STEP 1: Hunter on guessed domains (finds emails even without website) ──
   const domainCandidates = [
     `${firstName}${lastName}.com`,
     `${nameSlug}.com`,
@@ -1109,8 +1105,26 @@ async function findAuthorContact(authorName, bookTitle, saveLog, jobId = null) {
     `author${nameSlug}.com`,
   ];
 
-  // Search with author name + book title for stronger verification
-  const bookTitleShort = (bookTitle || '').split(':')[0].substring(0, 40); // first part before colon
+  if (HUNTER_API_KEY) {
+    for (const domain of domainCandidates.slice(0, 3)) { // try top 3 guesses
+      try {
+        const r = await axios.get(
+          `https://api.hunter.io/v2/email-finder?domain=${encodeURIComponent(domain)}&first_name=${encodeURIComponent(firstName)}&last_name=${encodeURIComponent(lastName)}&api_key=${HUNTER_API_KEY}`,
+          { timeout: 6000 }
+        ).catch(() => null);
+        const email = r?.data?.data?.email;
+        const score = r?.data?.data?.score || 0;
+        if (email && score >= 50) {
+          saveLog('success', `📧 Hunter (guessed domain): ${email} (${score}%)`);
+          return { email, website: `https://${domain}` };
+        }
+      } catch(e) {}
+    }
+  }
+
+  // ── STEP 2: Find author website — DDG + domain guessing ──
+  let foundWebsite = null;
+  const bookTitleShort = (bookTitle || '').split(':')[0].substring(0, 40);
   const searchQuery = bookTitleShort
     ? `"${authorName}" "${bookTitleShort}"`
     : `"${authorName}" author official website`;
@@ -1128,13 +1142,12 @@ async function findAuthorContact(authorName, bookTitle, saveLog, jobId = null) {
 
   if (ddgResult?.data) {
     const sites = extractRealWebsites(ddgResult.data);
-    // Prefer sites where domain contains author name (strongest signal)
     foundWebsite = sites.find(s => {
       try {
         const host = new URL(s).hostname.toLowerCase().replace(/^www\./, '');
         return nameParts.some(p => host.includes(p));
       } catch { return false; }
-    }) || sites[0] || null; // fallback to first result if no name match
+    }) || sites[0] || null;
   }
   if (!foundWebsite) foundWebsite = domainResults.find(r => r !== null) || null;
 
@@ -1145,23 +1158,7 @@ async function findAuthorContact(authorName, bookTitle, saveLog, jobId = null) {
 
   saveLog('info', `🌐 ${foundWebsite}`);
 
-  // ── STEP 2: Scrape homepage + /contact + /about FIRST (free) ──
-  const base = foundWebsite.replace(/\/$/, '');
-
-  const [homeResult, contactResult, aboutResult] = await Promise.all([
-    fetchEmails(base),
-    fetchEmails(`${base}/contact`),
-    fetchEmails(`${base}/about`)
-  ]);
-
-  const found = homeResult.email || contactResult.email || aboutResult.email;
-  if (found) {
-    saveLog('success', `📧 Found: ${found}`);
-    return { email: found, website: foundWebsite };
-  }
-
-  // ── STEP 3: Hunter LAST RESORT — only after scraping fails (saves credits) ──
-  // Per Hunter docs: "If email can't be found, it's free" — so this costs 0 if no result
+  // ── STEP 3: Hunter on found domain ──
   if (HUNTER_API_KEY) {
     try {
       const domain = new URL(foundWebsite).hostname.replace(/^www\./, '');
@@ -1172,10 +1169,24 @@ async function findAuthorContact(authorName, bookTitle, saveLog, jobId = null) {
       const email = r?.data?.data?.email;
       const score = r?.data?.data?.score || 0;
       if (email && score >= 30) {
-        saveLog('success', `📧 Hunter: ${email} (score: ${score}%)`);
+        saveLog('success', `📧 Hunter (found domain): ${email} (${score}%)`);
         return { email, website: foundWebsite };
       }
     } catch(e) {}
+  }
+
+  // ── STEP 4: Scrape homepage + /contact + /about ──
+  const base = foundWebsite.replace(/\/$/, '');
+  const [homeResult, contactResult, aboutResult] = await Promise.all([
+    fetchEmails(base),
+    fetchEmails(`${base}/contact`),
+    fetchEmails(`${base}/about`)
+  ]);
+
+  const found = homeResult.email || contactResult.email || aboutResult.email;
+  if (found) {
+    saveLog('success', `📧 Found on website: ${found}`);
+    return { email: found, website: foundWebsite };
   }
 
   saveLog('info', `⏩ No email found for ${authorName} (website-only)`);
