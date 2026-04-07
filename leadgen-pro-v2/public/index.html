@@ -1496,6 +1496,21 @@
         return;
       }
 
+      // Warn if date range is too old — Amazon New Releases only shows recent books
+      const today = new Date();
+      const fromDate = new Date(dateFrom);
+      const daysDiff = Math.floor((today - fromDate) / 86400000);
+      if (daysDiff > 45) {
+        const proceed = confirm(
+          `⚠️ Warning: Your date range starts ${daysDiff} days ago (${dateFrom}).\n\n` +
+          `Amazon New Releases only shows recent books (last ~30-45 days). ` +
+          `Books older than that are no longer on these pages, so you'll likely get 0 results.\n\n` +
+          `Recommended: use a start date within the last 30 days.\n\n` +
+          `Do you want to proceed anyway?`
+        );
+        if (!proceed) return;
+      }
+
       document.getElementById('amazonBtn').disabled = true;
       document.getElementById('amazonBtn').textContent = '⏳ Starting...';
 
