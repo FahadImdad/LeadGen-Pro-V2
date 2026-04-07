@@ -830,20 +830,34 @@ const FORMAT_FILTERS = [
   { code: '618073011',  name: 'Kindle' },
 ];
 
+// Amazon Advanced Search URL — uses month/year pub date filter (works for any historical date)
+// Format codes: Paperback=2656022011, Hardcover=2576410011, Kindle=618073011
+// Condition: New=1294423011
+// p_45=month (1-12), p_47=year, p_46=During
+const ADV_FORMAT_CODES = [
+  '2656022011', // Paperback
+  '2576410011', // Hardcover
+  '618073011',  // Kindle
+];
+
 function getAmazonUrl(urlIndex, page, formatFilter = '', dateFrom = '', dateTo = '') {
-  const cat = AMAZON_CATEGORY_NODES[urlIndex % AMAZON_CATEGORY_NODES.length];
   const pg = Math.max(1, Math.min(page, MAX_PAGES_PER_URL));
-  const formatParam = formatFilter ? `%2Cp_n_feature_browse-bin%3A${formatFilter}` : '';
-  // Add publication date filter if provided — Amazon uses Unix timestamps
-  let dateParam = '';
-  if (dateFrom && dateTo) {
-    try {
-      const fromTs = Math.floor(new Date(dateFrom).getTime() / 1000);
-      const toTs = Math.floor(new Date(dateTo + 'T23:59:59').getTime() / 1000);
-      dateParam = `%2Cp_n_publication_date%3A${fromTs}-${toTs}`;
-    } catch(e) {}
+
+  // Parse month/year from dateFrom (YYYY-MM-DD)
+  let month = 1, year = new Date().getFullYear();
+  if (dateFrom && dateFrom.length >= 7) {
+    const parts = dateFrom.split('-');
+    year  = parseInt(parts[0]) || year;
+    month = parseInt(parts[1]) || month;
   }
-  return `https://www.amazon.com/s?i=stripbooks&rh=n%3A${cat.id}${formatParam}${dateParam}&page=${pg}&s=date-desc-rank&language=en`;
+
+  // Rotate through format codes across urlIndex (Paperback → Hardcover → Kindle)
+  const formatCode = ADV_FORMAT_CODES[urlIndex % ADV_FORMAT_CODES.length];
+
+  // Build Amazon Advanced Search URL
+  // rh params: condition=New, format=formatCode, language=English
+  const rh = `p_n_condition-type%3A1294423011%2Cp_n_feature_browse-bin%3A${formatCode}%2Cp_20%3AEnglish`;
+  return `https://www.amazon.com/s?i=stripbooks&rh=${rh}&s=date-desc-rank&p_45=${month}&p_46=During&p_47=${year}&page=${pg}&unfiltered=1&ref=sr_adv_b`;
 }
 
 // Parse Amazon search results HTML (Web Unlocker) into book objects
@@ -1433,8 +1447,11 @@ async function runAmazonJob(jobId, dateFrom, dateTo, targetLeads, keyword) {
       const seenAsinsThisRun = new Set();
       const seenDomainsThisRun = new Set(); // skip duplicate domains (same author, multiple books)
       let cycleStartCount = verifiedCount; // track leads per full cycle to detect exhaustion
-      if (resuming) await saveLog(jobId, 'info', `📍 Resuming from category ${urlIndex + 1}/${AMAZON_CATEGORY_NODES.length}, page ${page_num}`);
-      await saveLog(jobId, 'info', `📚 Total categories: ${AMAZON_CATEGORY_NODES.length} × ${MAX_PAGES_PER_URL} pages = ${AMAZON_CATEGORY_NODES.length * MAX_PAGES_PER_URL * 50} max books`);
+      if (resuming) await saveLog(jobId, 'info', `📍 Resuming from format ${urlIndex + 1}/${ADV_FORMAT_CODES.length}, page ${page_num}`);
+      const monthNames = ['','Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+      const fromMonth = parseInt((dateFrom||'').split('-')[1]||1), fromYear = parseInt((dateFrom||'').split('-')[0]||2026);
+      const toMonth   = parseInt((dateTo||'').split('-')[1]||1),   toYear   = parseInt((dateTo||'').split('-')[0]||2026);
+      await saveLog(jobId, 'info', `📚 Amazon Advanced Search: ${monthNames[fromMonth]} ${fromYear} → ${monthNames[toMonth]} ${toYear} | Formats: Paperback, Hardcover, Kindle`);
 
       try {
         await saveLog(jobId, 'info', `🚀 Amazon scraper using Web Unlocker (no browser needed)...`);
@@ -1448,56 +1465,82 @@ async function runAmazonJob(jobId, dateFrom, dateTo, targetLeads, keyword) {
         ];
         let headerIdx = 0;
 
-        async function scrapeOnePage(pageNum) {
-          const pgUrl = getAmazonUrl(urlIndex, pageNum, '', dateFrom, dateTo);
-          try {
-            // Try direct HTTP first (no cost)
-            const headers = AMAZON_HEADERS[headerIdx % AMAZON_HEADERS.length];
-            headerIdx++;
-            const resp = await axios.get(pgUrl, { headers, timeout: 15000, maxRedirects: 3 });
-            const html = resp.data;
-            if (html && html.includes('a-size-medium') && !html.includes('To discuss automated access')) {
-              const books = parseAmazonNewReleasesHtml(html);
-              if (books.length > 0) return books;
+        // Build list of (month, year, formatIndex) combinations to iterate
+        // e.g. Jan 2025 × Paperback, Jan 2025 × Hardcover, Jan 2025 × Kindle, Feb 2025 × Paperback ...
+        function buildMonthList(from, to) {
+          const list = [];
+          let y = parseInt(from.split('-')[0]), m = parseInt(from.split('-')[1]);
+          const toY = parseInt(to.split('-')[0]), toM = parseInt(to.split('-')[1]);
+          while (y < toY || (y === toY && m <= toM)) {
+            for (let fi = 0; fi < ADV_FORMAT_CODES.length; fi++) {
+              list.push({ year: y, month: m, formatIndex: fi });
             }
-            // Blocked — fallback to Bright Data (costs money)
-            await saveLog(jobId, 'info', `🔄 Direct blocked, using BD for page ${pageNum}...`);
-            const bdHtml = await scrapeWithBrightData(pgUrl, jobId);
-            if (!bdHtml) return [];
-            return parseAmazonNewReleasesHtml(bdHtml);
-          } catch(e) {
-            await saveLog(jobId, 'warning', `⚠️ Page fetch error: ${e.message}`);
-            return [];
+            m++; if (m > 12) { m = 1; y++; }
           }
+          return list;
         }
+        const monthList = buildMonthList(dateFrom, dateTo);
+        const totalSlots = monthList.length;
+        await saveLog(jobId, 'info', `📅 Total search slots: ${totalSlots} (${Math.ceil(totalSlots/3)} months × 3 formats)`);
 
         while (keepGoing) {
-          // When we reach the end of Amazon pages, loop back to page 1 with a fresh date offset
+          // When we reach the end of Amazon pages for current slot, move to next slot
           if (page_num > maxPages) {
             urlIndex++;
             page_num = 1;
             consecutiveEmpty = 0;
-            if (urlIndex >= AMAZON_CATEGORY_NODES.length) {
-              // Completed one full cycle of all categories — check if we found anything new
+            if (urlIndex >= totalSlots) {
+              // Completed all month/format combinations
               const newLeadsThisCycle = verifiedCount - (cycleStartCount || 0);
               if (newLeadsThisCycle === 0) {
-                // No new leads found in entire cycle — all books exhausted
                 keepGoing = false;
                 await saveLog(jobId, 'warning', `⚠️ No more verified leads available in this date range. Found ${verifiedCount}/${targetLeads} leads total.`);
                 break;
               }
               cycleStartCount = verifiedCount;
               urlIndex = 0;
-              await saveLog(jobId, 'info', `🔄 Completed all ${AMAZON_CATEGORY_NODES.length} categories — found ${newLeadsThisCycle} new leads this cycle. Restarting...`);
+              await saveLog(jobId, 'info', `🔄 Completed all slots — found ${newLeadsThisCycle} new leads this cycle. Restarting...`);
               seenAsinsThisRun.clear();
             } else {
-              await saveLog(jobId, 'info', `📂 Moving to next category URL ${urlIndex+1}/${AMAZON_CATEGORY_NODES.length}...`);
+              const slot = monthList[urlIndex];
+              const fmtName = ['Paperback','Hardcover','Kindle'][slot.formatIndex];
+              const mName = ['','Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][slot.month];
+              await saveLog(jobId, 'info', `📂 Moving to slot ${urlIndex+1}/${totalSlots}: ${mName} ${slot.year} — ${fmtName}`);
             }
           }
 
+          const slot = monthList[Math.min(urlIndex, totalSlots - 1)];
+          // Override dateFrom for getAmazonUrl to use current slot's month/year
+          const slotDateFrom = `${slot.year}-${String(slot.month).padStart(2,'0')}-01`;
+          const fmtName = ['Paperback','Hardcover','Kindle'][slot.formatIndex];
+          const mName = ['','Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][slot.month];
+
           const pageBatch = Array.from({length: 20}, (_, i) => page_num + i).filter(p => p <= maxPages);
-          await saveLog(jobId, 'info', `📄 Category ${urlIndex+1}/${AMAZON_CATEGORY_NODES.length} — pages ${pageBatch.join(',')}...`);
-          const batchResults = await Promise.all(pageBatch.map(p => scrapeOnePage(p)));
+          await saveLog(jobId, 'info', `📄 [${mName} ${slot.year} / ${fmtName}] pages ${pageBatch.join(',')}...`);
+
+          // Override scrapeOnePage to use slot URL
+          async function scrapeOnePageSlot(pageNum) {
+            const pgUrl = getAmazonUrl(slot.formatIndex, pageNum, '', slotDateFrom, slotDateFrom);
+            try {
+              const headers = AMAZON_HEADERS[headerIdx % AMAZON_HEADERS.length];
+              headerIdx++;
+              const resp = await axios.get(pgUrl, { headers, timeout: 15000, maxRedirects: 3 });
+              const html = resp.data;
+              if (html && html.includes('a-size-medium') && !html.includes('To discuss automated access')) {
+                const books = parseAmazonNewReleasesHtml(html);
+                if (books.length > 0) return books;
+              }
+              await saveLog(jobId, 'info', `🔄 Direct blocked, using BD for page ${pageNum}...`);
+              const bdHtml = await scrapeWithBrightData(pgUrl, jobId);
+              if (!bdHtml) return [];
+              return parseAmazonNewReleasesHtml(bdHtml);
+            } catch(e) {
+              await saveLog(jobId, 'warning', `⚠️ Page fetch error: ${e.message}`);
+              return [];
+            }
+          }
+
+          const batchResults = await Promise.all(pageBatch.map(p => scrapeOnePageSlot(p)));
           page_num += 20;
 
           // Save resume position after every batch

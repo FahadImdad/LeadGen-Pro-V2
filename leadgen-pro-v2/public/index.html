@@ -334,15 +334,36 @@
         </div>
 
         <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-          <!-- Date Range -->
+          <!-- Date Range — Month/Year pickers for Amazon Advanced Search -->
           <div>
-            <label class="block text-xs text-gray-400 mb-1">From</label>
-            <input type="date" id="dateFrom-amazon" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm focus:border-blue-500 focus:outline-none">
+            <label class="block text-xs text-gray-400 mb-1">From (Month &amp; Year)</label>
+            <div class="flex gap-2">
+              <select id="monthFrom-amazon" class="flex-1 bg-gray-700 border border-gray-600 rounded px-2 py-2 text-sm focus:border-blue-500 focus:outline-none">
+                <option value="1">Jan</option><option value="2">Feb</option><option value="3">Mar</option>
+                <option value="4">Apr</option><option value="5">May</option><option value="6">Jun</option>
+                <option value="7">Jul</option><option value="8">Aug</option><option value="9">Sep</option>
+                <option value="10">Oct</option><option value="11">Nov</option><option value="12">Dec</option>
+              </select>
+              <select id="yearFrom-amazon" class="flex-1 bg-gray-700 border border-gray-600 rounded px-2 py-2 text-sm focus:border-blue-500 focus:outline-none">
+              </select>
+            </div>
           </div>
           <div>
-            <label class="block text-xs text-gray-400 mb-1">To</label>
-            <input type="date" id="dateTo-amazon" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm focus:border-blue-500 focus:outline-none">
+            <label class="block text-xs text-gray-400 mb-1">To (Month &amp; Year)</label>
+            <div class="flex gap-2">
+              <select id="monthTo-amazon" class="flex-1 bg-gray-700 border border-gray-600 rounded px-2 py-2 text-sm focus:border-blue-500 focus:outline-none">
+                <option value="1">Jan</option><option value="2">Feb</option><option value="3">Mar</option>
+                <option value="4">Apr</option><option value="5">May</option><option value="6">Jun</option>
+                <option value="7">Jul</option><option value="8">Aug</option><option value="9">Sep</option>
+                <option value="10">Oct</option><option value="11">Nov</option><option value="12">Dec</option>
+              </select>
+              <select id="yearTo-amazon" class="flex-1 bg-gray-700 border border-gray-600 rounded px-2 py-2 text-sm focus:border-blue-500 focus:outline-none">
+              </select>
+            </div>
           </div>
+          <!-- Hidden date inputs for compatibility -->
+          <input type="hidden" id="dateFrom-amazon">
+          <input type="hidden" id="dateTo-amazon">
         </div>
 
         <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
@@ -917,14 +938,59 @@
 
     // ===================== DATE DEFAULTS =====================
     function setDefaultDates() {
-      const today = new Date().toISOString().split('T')[0];
+      const today = new Date();
+      const todayStr = today.toISOString().split('T')[0];
       const weekAgo = new Date(Date.now() - 7 * 86400000).toISOString().split('T')[0];
-      ['intent', 'amazon'].forEach(f => {
-        const fromEl = document.getElementById(`dateFrom-${f}`);
-        const toEl = document.getElementById(`dateTo-${f}`);
-        if (fromEl) fromEl.value = weekAgo;
-        if (toEl) toEl.value = today;
+
+      // Intent: regular date pickers
+      const fromEl = document.getElementById('dateFrom-intent');
+      const toEl = document.getElementById('dateTo-intent');
+      if (fromEl) fromEl.value = weekAgo;
+      if (toEl) toEl.value = todayStr;
+
+      // Amazon: month/year dropdowns
+      populateAmazonYears();
+      const currentYear = today.getFullYear();
+      const currentMonth = today.getMonth() + 1; // 1-based
+      const fromMonth = currentMonth === 1 ? 12 : currentMonth - 1;
+      const fromYear = currentMonth === 1 ? currentYear - 1 : currentYear;
+
+      const mFrom = document.getElementById('monthFrom-amazon');
+      const yFrom = document.getElementById('yearFrom-amazon');
+      const mTo = document.getElementById('monthTo-amazon');
+      const yTo = document.getElementById('yearTo-amazon');
+      if (mFrom) mFrom.value = fromMonth;
+      if (yFrom) yFrom.value = fromYear;
+      if (mTo) mTo.value = currentMonth;
+      if (yTo) yTo.value = currentYear;
+
+      syncAmazonHiddenDates();
+    }
+
+    function populateAmazonYears() {
+      const currentYear = new Date().getFullYear();
+      ['yearFrom-amazon', 'yearTo-amazon'].forEach(id => {
+        const sel = document.getElementById(id);
+        if (!sel || sel.options.length > 0) return;
+        for (let y = currentYear; y >= 2020; y--) {
+          const opt = document.createElement('option');
+          opt.value = y; opt.textContent = y;
+          sel.appendChild(opt);
+        }
       });
+    }
+
+    function syncAmazonHiddenDates() {
+      const mFrom = parseInt(document.getElementById('monthFrom-amazon')?.value || 1);
+      const yFrom = parseInt(document.getElementById('yearFrom-amazon')?.value || new Date().getFullYear());
+      const mTo   = parseInt(document.getElementById('monthTo-amazon')?.value || 1);
+      const yTo   = parseInt(document.getElementById('yearTo-amazon')?.value || new Date().getFullYear());
+
+      const pad = n => String(n).padStart(2, '0');
+      const daysInMonth = (m, y) => new Date(y, m, 0).getDate();
+
+      document.getElementById('dateFrom-amazon').value = `${yFrom}-${pad(mFrom)}-01`;
+      document.getElementById('dateTo-amazon').value   = `${yTo}-${pad(mTo)}-${daysInMonth(mTo, yTo)}`;
     }
 
     // ===================== POLLING INFRASTRUCTURE =====================
@@ -1496,21 +1562,6 @@
         return;
       }
 
-      // Warn if date range is too old — Amazon New Releases only shows recent books
-      const today = new Date();
-      const fromDate = new Date(dateFrom);
-      const daysDiff = Math.floor((today - fromDate) / 86400000);
-      if (daysDiff > 45) {
-        const proceed = confirm(
-          `⚠️ Warning: Your date range starts ${daysDiff} days ago (${dateFrom}).\n\n` +
-          `Amazon New Releases only shows recent books (last ~30-45 days). ` +
-          `Books older than that are no longer on these pages, so you'll likely get 0 results.\n\n` +
-          `Recommended: use a start date within the last 30 days.\n\n` +
-          `Do you want to proceed anyway?`
-        );
-        if (!proceed) return;
-      }
-
       document.getElementById('amazonBtn').disabled = true;
       document.getElementById('amazonBtn').textContent = '⏳ Starting...';
 
@@ -1618,6 +1669,11 @@
     document.addEventListener('DOMContentLoaded', () => {
       wakeServer();
       setDefaultDates();
+      // Sync hidden date inputs when month/year dropdowns change
+      ['monthFrom-amazon','yearFrom-amazon','monthTo-amazon','yearTo-amazon'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.addEventListener('change', syncAmazonHiddenDates);
+      });
       loadJobs('intent');
       loadJobs('amazon');
       loadVersion();
